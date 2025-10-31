@@ -1,31 +1,34 @@
 {% extends "base.html" %}
 {% block content %}
-  <h2>Registrarse</h2>
-  <form method="post">
-    <label>Correo *</label>
-    <input name="email" type="email" required>
+<section class="shell">
+  <div class="grid">
+    <div class="hero">
+      <h1>Crea tu cuenta</h1>
+      <p>Unos pocos datos y listo.</p>
+    </div>
 
-    <label>Nombre *</label>
-    <input name="first_name" required>
+    <div class="card">
+      <h2 class="center">Registrarse</h2>
+      <form class="form" method="post">
+        <input class="input" name="email" type="email" placeholder="Correo *" required>
 
-    <label>Apellidos *</label>
-    <input name="last_name" required>
+        <div class="row">
+          <input class="input" name="first_name" placeholder="Nombre *" required>
+          <input class="input" name="last_name" placeholder="Apellidos *" required>
+        </div>
 
-    <label>Dirección</label>
-    <input name="address">
+        <input class="input" name="address" placeholder="Dirección">
+        <input class="input" name="phone" placeholder="Teléfono">
+        <input class="input" name="company" placeholder="Empresa">
 
-    <label>Teléfono</label>
-    <input name="phone">
+        <input class="input" name="password" type="password" placeholder="Contraseña (mín. 8) *" required>
+        <input class="input" name="confirm" type="password" placeholder="Confirmar contraseña *" required>
 
-    <label>Nombre de la empresa</label>
-    <input name="company">
-
-    <label>Contraseña (mín. 8) *</label>
-    <input name="password" type="password" required>
-
-    <label>Confirmar contraseña *</label>
-    <input name="confirm" type="password" required>
-
-    <button type="submit">Crear cuenta</button>
-  </form>
+        <button class="btn btn-green" type="submit">Crear cuenta</button>
+      </form>
+      <div class="divider"></div>
+      <p class="center"><a href="{{ url_for('login') }}">¿Ya tienes cuenta? Inicia sesión</a></p>
+    </div>
+  </div>
+</section>
 {% endblock %}

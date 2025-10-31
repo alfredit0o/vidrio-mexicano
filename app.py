@@ -9,7 +9,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-this")
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "vidrio.db")
 
-# ---------- DB ----------
+# -------- DB -------
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
@@ -19,10 +19,11 @@ def get_db():
 
 def init_db():
     db = get_db()
+    # Tabla con email único y también phone único
     db.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
+            email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             first_name TEXT NOT NULL,
             last_name TEXT NOT NULL,
@@ -32,6 +33,8 @@ def init_db():
             created_at TEXT NOT NULL
         );
     """)
+    # Asegurar índice único en phone (si ya hay datos duplicados, fallará al crear; ver nota abajo)
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone);")
     db.commit()
 
 @app.teardown_appcontext
@@ -43,22 +46,17 @@ def close_connection(exception):
 with app.app_context():
     init_db()
 
-# ---------- Helpers ----------
+# -------- Helpers -------
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def create_user(email, password, first_name, last_name, address, phone, company):
     db = get_db()
     pw_hash = generate_password_hash(password)
-    try:
-        db.execute("""
-            INSERT INTO users (email, password_hash, first_name, last_name, address, phone, company, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (email, pw_hash, first_name, last_name, address, phone, company, datetime.utcnow().isoformat()))
-        db.commit()
-        return True
-    except sqlite3.IntegrityError:
-        # email duplicado
-        return False
+    db.execute("""
+        INSERT INTO users (email, password_hash, first_name, last_name, address, phone, company, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (email, pw_hash, first_name, last_name, address, phone, company, datetime.utcnow().isoformat()))
+    db.commit()
 
 def authenticate(email, password):
     db = get_db()
@@ -68,7 +66,7 @@ def authenticate(email, password):
 def get_current_user():
     return session.get("user_email")
 
-# ---------- Rutas ----------
+# -------- Rutas -------
 @app.route("/")
 def root():
     return redirect(url_for("dashboard" if get_current_user() else "login"))
@@ -84,28 +82,37 @@ def register():
         address     = request.form.get("address","").strip()
         phone       = request.form.get("phone","").strip()
         company     = request.form.get("company","").strip()
+        accept      = request.form.get("accept")  # "on" si marcó el checkbox
 
-        # Validaciones básicas
+        # Validaciones
         if not (email and password and confirm and first_name and last_name):
-            flash("Completa los campos obligatorios (*).", "warning")
-            return redirect(url_for("register"))
+            flash("Completa los campos obligatorios (*).", "warning"); return redirect(url_for("register"))
         if not EMAIL_RE.match(email):
-            flash("Correo inválido.", "danger")
-            return redirect(url_for("register"))
+            flash("Correo inválido.", "danger"); return redirect(url_for("register"))
         if password != confirm:
-            flash("Las contraseñas no coinciden.", "danger")
-            return redirect(url_for("register"))
+            flash("Las contraseñas no coinciden.", "danger"); return redirect(url_for("register"))
         if len(password) < 8:
-            flash("La contraseña debe tener al menos 8 caracteres.", "warning")
-            return redirect(url_for("register"))
+            flash("La contraseña debe tener al menos 8 caracteres.", "warning"); return redirect(url_for("register"))
+        if not accept:
+            flash("Debes aceptar las políticas para continuar.", "warning"); return redirect(url_for("register"))
 
-        ok = create_user(email, password, first_name, last_name, address, phone, company)
-        if ok:
-            flash("Cuenta creada. Inicia sesión.", "success")
-            return redirect(url_for("login"))
-        else:
-            flash("Ese correo ya está registrado.", "danger")
-            return redirect(url_for("register"))
+        db = get_db()
+        # Unicidad de correo y teléfono
+        if db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            flash("Ese correo ya está registrado.", "danger"); return redirect(url_for("register"))
+        if phone and db.execute("SELECT 1 FROM users WHERE phone = ?", (phone,)).fetchone():
+            flash("Ese teléfono ya está registrado.", "danger"); return redirect(url_for("register"))
+
+        try:
+            create_user(email, password, first_name, last_name, address, phone, company)
+        except sqlite3.IntegrityError as e:
+            # Por si el índice único de phone/email dispara aquí
+            msg = "Correo o teléfono ya registrados."
+            flash(msg, "danger"); return redirect(url_for("register"))
+
+        flash("Cuenta creada. Inicia sesión.", "success")
+        # regresar a inicio (login)
+        return redirect(url_for("login"))
 
     return render_template("register.html")
 
@@ -136,11 +143,18 @@ def dashboard():
         flash("Acceso no autorizado. Inicia sesión.", "warning")
         return redirect(url_for("login"))
 
-    # Cargar datos básicos del usuario para mostrarlos
     db = get_db()
-    u = db.execute("SELECT first_name, last_name, company FROM users WHERE email = ?", (user_email,)).fetchone()
+    u = db.execute("SELECT first_name, last_name FROM users WHERE email = ?", (user_email,)).fetchone()
     full_name = f"{u['first_name']} {u['last_name']}" if u else user_email
-    return render_template("dashboard.html", user=full_name)
-    
+
+    # Un menú simple
+    menu = [
+        {"href": url_for("dashboard"), "label": "Inicio"},
+        {"href": "#", "label": "Pedidos (próximamente)"},
+        {"href": "#", "label": "Perfil (próximamente)"},
+        {"href": url_for("logout"), "label": "Cerrar sesión"},
+    ]
+    return render_template("dashboard.html", user=full_name, menu=menu)
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5020)), debug=True)

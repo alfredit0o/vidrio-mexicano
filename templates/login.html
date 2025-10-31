@@ -11,12 +11,15 @@
       <h2 class="center">Iniciar sesión</h2>
       <form class="form" method="post">
         <input class="input" name="email" type="email" placeholder="Correo electrónico" required>
-        <div style="position:relative">
-          <input id="password" class="input" name="password" type="password" placeholder="Contraseña" required>
-          <button type="button" id="togglePass" style="position:absolute; right:12px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer;">Mostrar</button>
+
+        <div class="field">
+          <input id="password" class="input with-toggle" name="password" type="password" placeholder="Contraseña" required>
+          <button type="button" class="toggle" id="togglePass">Mostrar</button>
         </div>
+
         <button class="btn btn-primary" type="submit">Entrar</button>
       </form>
+
       <div class="divider"></div>
       <p class="center"><a href="{{ url_for('register') }}">¿No tienes cuenta? Crea una nueva</a></p>
       <p class="muted">Al continuar aceptas nuestras políticas.</p>

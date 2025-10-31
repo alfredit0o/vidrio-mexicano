@@ -3,12 +3,13 @@
 <section class="shell">
   <div class="grid">
     <div class="hero">
-      <h1>Crea tu cuenta</h1>
-      <p>Unos pocos datos y listo.</p>
+      <h1>Registrarse</h1>
+      <p>Crea tu cuenta para continuar.</p>
     </div>
 
     <div class="card">
       <h2 class="center">Registrarse</h2>
+
       <form class="form" method="post">
         <input class="input" name="email" type="email" placeholder="Correo *" required>
 
@@ -17,18 +18,28 @@
           <input class="input" name="last_name" placeholder="Apellidos *" required>
         </div>
 
-        <input class="input" name="address" placeholder="Dirección">
-        <input class="input" name="phone" placeholder="Teléfono">
-        <input class="input" name="company" placeholder="Empresa">
+        <div class="row">
+          <input class="input" name="address" placeholder="Dirección">
+          <input class="input" name="phone" placeholder="Teléfono">
+        </div>
+
+        <input class="input" name="company" placeholder="Nombre de la empresa">
 
         <input class="input" name="password" type="password" placeholder="Contraseña (mín. 8) *" required>
         <input class="input" name="confirm" type="password" placeholder="Confirmar contraseña *" required>
 
+        <label style="display:flex; gap:8px; align-items:flex-start; font-size:14px; color:#444;">
+          <input type="checkbox" name="accept" required>
+          <span>Acepto las <a href="#" target="_blank">políticas de privacidad</a> y términos de uso.</span>
+        </label>
+
         <button class="btn btn-green" type="submit">Crear cuenta</button>
       </form>
+
       <div class="divider"></div>
       <p class="center"><a href="{{ url_for('login') }}">¿Ya tienes cuenta? Inicia sesión</a></p>
     </div>
   </div>
 </section>
 {% endblock %}
+

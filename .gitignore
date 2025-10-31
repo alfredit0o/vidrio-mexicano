@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+vidrio.db
+venv/
+.env
+.DS_Store

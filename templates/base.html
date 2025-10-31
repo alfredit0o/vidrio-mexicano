@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Vidrio App</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+      body { font-family: Arial, sans-serif; max-width:800px; margin: 30px auto; padding: 0 20px; }
+      .flash { padding:10px; margin-bottom:10px; border-radius:4px; }
+      .success { background:#d4edda; color:#155724; }
+      .danger { background:#f8d7da; color:#721c24; }
+      .warning { background:#fff3cd; color:#856404; }
+      .info { background:#d1ecf1; color:#0c5460; }
+      form input { display:block; margin:8px 0; padding:8px; width:100%; max-width:400px; }
+      .nav { margin-bottom:15px; }
+    </style>
+  </head>
+  <body>
+    <div class="nav">
+      {% if session.user %}
+        Bienvenido {{ session.user }} — <a href="{{ url_for('dashboard') }}">Dashboard</a> | <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Iniciar sesión</a> | <a href="{{ url_for('register') }}">Registrarse</a>
+      {% endif %}
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </body>
+</html>

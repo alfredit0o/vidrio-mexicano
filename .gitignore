@@ -3,4 +3,3 @@ __pycache__/
 vidrio.db
 venv/
 .env
-.DS_Store

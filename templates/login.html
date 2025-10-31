@@ -1,11 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-  <h2>Iniciar sesión</h2>
-  <form method="post">
-    <label>Usuario</label>
-    <input name="username" required>
-    <label>Contraseña</label>
-    <input name="password" type="password" required>
-    <button type="submit">Entrar</button>
-  </form>
+<div class="fb-wrap">
+  <div class="fb-grid">
+    <div class="fb-left">
+      <h1>vidrio</h1>
+      <p>Conéctate con tu cuenta para continuar.</p>
+    </div>
+
+    <div class="card">
+      <form method="post">
+        <input class="input" name="email" type="email" placeholder="Correo electrónico" required>
+        <div style="position:relative;">
+          <input id="password" class="input" name="password" type="password" placeholder="Contraseña" required>
+          <button type="button" id="togglePass" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer;">Mostrar</button>
+        </div>
+        <button class="btn-primary" type="submit">Iniciar sesión</button>
+      </form>
+
+      <a class="link" href="{{ url_for('register') }}">¿No tienes cuenta? Crea una nueva</a>
+      <div class="divider"></div>
+      <a class="link" href="#">¿Olvidaste tu contraseña?</a>
+      <p class="small-muted">Al continuar aceptas nuestras políticas.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const btn = document.getElementById('togglePass');
+  const input = document.getElementById('password');
+  if (btn && input) {
+    btn.addEventListener('click', () => {
+      const isPass = input.type === 'password';
+      input.type = isPass ? 'text' : 'password';
+      btn.textContent = isPass ? 'Ocultar' : 'Mostrar';
+    });
+  }
+</script>
 {% endblock %}

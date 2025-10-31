@@ -1,29 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="fb-wrap">
-  <div class="fb-grid">
-    <div class="fb-left">
-      <h1>vidrio</h1>
+<section class="shell">
+  <div class="grid">
+    <div class="hero">
+      <h1>Bienvenido vidriero</h1>
       <p>Conéctate con tu cuenta para continuar.</p>
     </div>
 
     <div class="card">
-      <form method="post">
+      <h2 class="center">Iniciar sesión</h2>
+      <form class="form" method="post">
         <input class="input" name="email" type="email" placeholder="Correo electrónico" required>
-        <div style="position:relative;">
+        <div style="position:relative">
           <input id="password" class="input" name="password" type="password" placeholder="Contraseña" required>
-          <button type="button" id="togglePass" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer;">Mostrar</button>
+          <button type="button" id="togglePass" style="position:absolute; right:12px; top:50%; transform:translateY(-50%); border:none; background:transparent; cursor:pointer;">Mostrar</button>
         </div>
-        <button class="btn-primary" type="submit">Iniciar sesión</button>
+        <button class="btn btn-primary" type="submit">Entrar</button>
       </form>
-
-      <a class="link" href="{{ url_for('register') }}">¿No tienes cuenta? Crea una nueva</a>
       <div class="divider"></div>
-      <a class="link" href="#">¿Olvidaste tu contraseña?</a>
-      <p class="small-muted">Al continuar aceptas nuestras políticas.</p>
+      <p class="center"><a href="{{ url_for('register') }}">¿No tienes cuenta? Crea una nueva</a></p>
+      <p class="muted">Al continuar aceptas nuestras políticas.</p>
     </div>
   </div>
-</div>
+</section>
 
 <script>
   const btn = document.getElementById('togglePass');

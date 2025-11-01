@@ -25,7 +25,7 @@
 </style>
 
 <div class="wrap">
-  <h2 class="title">Capturar medida — v2.2</h2>
+  <h2 class="title">Capturar medida — v2.3</h2>
   <p class="hint" id="status">Enmarca el vidrio y toca el botón.</p>
 
   <div class="stage" id="stage">
@@ -136,12 +136,12 @@ btnShot.addEventListener('click', async ()=>{
 });
 
 /* ====== Editor (Flecha + Texto) ====== */
-let tool='dim', shapes=[], activeId=null, dragStart=null, hoverId=null;
+let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null, hoverId=null;
 
 function setLegend(){
   const map={
-    dim:'↔ Arrastra para crear la flecha. Doble toque para editar la etiqueta.',
-    text:'Toca para colocar texto.',
+    dim:'↔ Arrastra para crear la cota. Luego mueve o ajusta puntas. Doble toque para editar la medida.',
+    text:'Toca para colocar un rótulo. Doble toque para editar.',
     delete:'Toca un elemento para borrarlo.',
     clear:'Limpia todas las anotaciones.'
   };
@@ -170,27 +170,37 @@ function toCanvasPos(evt){
   return {x:x*sx, y:y*sy};
 }
 
+/* ---- dibujo ---- */
 function draw(){
   const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
   shapes.forEach(s=>{
     ctx.save();
     ctx.lineWidth=4; ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
     ctx.font='32px system-ui, -apple-system, Segoe UI, Roboto';
+
     if(s.type==='dim'){
       const {a,b}=s;
+      // línea
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      // puntas
       drawArrow(ctx,a,b); drawArrow(ctx,b,a);
-      drawLabel(ctx, mid(a,b), s.label||'');
-    }else if(s.type==='text'){
-      drawLabel(ctx,s.pos,s.label||'Texto');
+      // etiqueta si existe
+      if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label);
+      // handles cuando está activa u hover
+      if(s.id===hoverId || s.id===activeId){ drawHandle(ctx,a); drawHandle(ctx,b); }
+    }
+    else if(s.type==='text'){
+      drawLabel(ctx,s.pos, s.label || 'Texto');
     }
     ctx.restore();
   });
   if(hoverId!=null){
-    const s=shapes.find(x=>x.id===hoverId); if(!s) return;
-    const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=3;
-    if(s.type==='dim'){ ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke(); }
-    ctx.restore();
+    const s=shapes.find(x=>x.id===hoverId);
+    if(s && s.type==='dim'){
+      const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke();
+      ctx.restore();
+    }
   }
 }
 function drawArrow(ctx, p1, p2){
@@ -210,6 +220,12 @@ function drawLabel(ctx, pos, text){
   ctx.fillStyle='var(--labelText)'; ctx.textBaseline='middle'; ctx.textAlign='center';
   ctx.fillText(t, x+w/2, y+h/2);
 }
+function drawHandle(ctx, p){
+  ctx.save();
+  ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(p.x,p.y,10,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
 function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
 function distToSegment(p,a,b){
@@ -217,51 +233,95 @@ function distToSegment(p,a,b){
   let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));
   const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)}; return Math.hypot(p.x-proj.x,p.y-proj.y);
 }
+function dist(p,q){ return Math.hypot(p.x-q.x,p.y-q.y); }
+
+/* ---- hit test con extremos ---- */
 function hitTest(p){
   for(let i=shapes.length-1;i>=0;i--){
     const s=shapes[i];
-    if(s.type==='dim'){ if(distToSegment(p,s.a,s.b)<18) return s.id; }
-    else if(s.type==='text'){ if(Math.abs(p.x-s.pos.x)<80&&Math.abs(p.y-s.pos.y)<30) return s.id; }
+    if(s.type==='dim'){
+      if(dist(p,s.a)<20) return {id:s.id, part:'a'};
+      if(dist(p,s.b)<20) return {id:s.id, part:'b'};
+      if(distToSegment(p,s.a,s.b)<18) return {id:s.id, part:'line'};
+    }else if(s.type==='text'){
+      if(Math.abs(p.x-s.pos.x)<80&&Math.abs(p.y-s.pos.y)<30) return {id:s.id, part:'text'};
+    }
   }
   return null;
 }
+
 function promptLabel(defaultText){
   const v=prompt('Valor/etiqueta (ej: 386 mm):', defaultText||''); return v==null?null:v;
 }
 function addShape(s){ s.id=(Date.now()+Math.random()).toString(36); shapes.push(s); draw(); }
 
+/* ---- interacción ---- */
 function initAnnotator(){
-  shapes=[]; activeId=null; dragStart=null; hoverId=null; draw();
+  shapes=[]; activeId=null; dragMode=null; dragStart=null; hoverId=null; draw();
   setTool('dim');
 
   const onDown=(e)=>{
-    if(gesture.active) return; // si estamos pinch/zoom, ignorar
-    const p=toCanvasPos(e); hoverId=hitTest(p); activeId=hoverId; dragStart=p;
-    if(tool==='delete'){ if(activeId!=null){ shapes=shapes.filter(s=>s.id!==activeId); activeId=null; draw(); } return; }
-    if(tool==='dim'){ addShape({type:'dim', a:p, b:p, label:''}); activeId=shapes[shapes.length-1].id; }
-    else if(tool==='text'){ const val=promptLabel('Texto'); if(val!==null) addShape({type:'text', pos:p, label:val}); }
+    if(gesture.active) return; // ignorar si está el gesto de zoom
+    const p=toCanvasPos(e);
+    const hit=hitTest(p); hoverId = hit ? hit.id : null;
+
+    if(tool==='delete'){
+      if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); activeId=null; draw(); }
+      return;
+    }
+
+    if(tool==='text'){
+      // coloca texto visible de inmediato
+      addShape({type:'text', pos:p, label:'Texto'});
+      draw();
+      return;
+    }
+
+    // tool === 'dim'
+    if(hit){
+      activeId = hit.id;
+      dragStart = p;
+      dragMode = hit.part; // 'a' | 'b' | 'line'
+    }else{
+      // crear nueva cota arrastrando
+      const s={type:'dim', a:p, b:p, label:''};
+      addShape(s);
+      activeId = s.id;
+      dragStart = p;
+      dragMode = 'creating';
+    }
     e.preventDefault();
   };
+
   const onMove=(e)=>{
     if(gesture.active) return;
     const p=toCanvasPos(e);
-    if(activeId!=null && dragStart){
+
+    if(activeId){
       const s=shapes.find(x=>x.id===activeId); if(!s) return;
-      if(s.type==='dim'){ s.b=p; draw(); }
-    }else{
-      hoverId=hitTest(p); draw();
+      if(s.type==='dim'){
+        if(dragMode==='a'){ s.a = p; }
+        else if(dragMode==='b'){ s.b = p; }
+        else if(dragMode==='line' || dragMode==='creating'){
+          const dx=p.x-dragStart.x, dy=p.y-dragStart.y;
+          s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy;
+          dragStart=p;
+        }
+        draw();
+      }
+      return;
     }
+
+    // hover cuando no arrastramos
+    const hit=hitTest(p);
+    hoverId = hit ? hit.id : null;
+    draw();
     e.preventDefault();
   };
+
   const onUp=(e)=>{
-    if(gesture.active) return;
-    if(activeId!=null){
-      const s=shapes.find(x=>x.id===activeId);
-      if(s?.type==='dim'){
-        const val=promptLabel(s.label||''); if(val!==null) s.label=val;
-      }
-    }
-    activeId=null; dragStart=null; draw();
+    // no pedimos etiqueta aquí; se edita con doble toque
+    activeId=null; dragMode=null; dragStart=null;
     e.preventDefault();
   };
 
@@ -270,10 +330,15 @@ function initAnnotator(){
   paint.onpointerup=onUp;
   paint.onpointerleave=onUp;
 
-  // Doble click/tap para editar etiqueta del elemento bajo el dedo
+  // Doble toque/click: editar etiqueta del elemento bajo el dedo
   paint.addEventListener('dblclick', (e)=>{
-    const p=toCanvasPos(e); const id=hitTest(p); if(id==null) return;
-    const s=shapes.find(x=>x.id===id); const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
+    const p=toCanvasPos(e);
+    const hit=hitTest(p); if(!hit) return;
+    const s=shapes.find(x=>x.id===hit.id); if(!s) return;
+    if(s.type==='dim' || s.type==='text'){
+      const val=promptLabel(s.label||'');
+      if(val!==null){ s.label=val; draw(); }
+    }
   });
 }
 

@@ -184,3 +184,34 @@
   .module-card img{ width:64px; height:64px; object-fit:contain; margin-bottom:10px; }
   .module-card span{ font-weight:700; }
   
+
+  .module-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap:16px;
+    margin-top:16px;
+  }
+  
+  .module-card{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px;
+    text-decoration:none;
+    color:var(--text);
+    box-shadow:0 6px 20px rgba(0,0,0,.06);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .module-card:hover{
+    transform: translateY(-2px);
+    box-shadow:0 10px 28px rgba(0,0,0,.10);
+  }
+  .module-card img{
+    width:64px; height:64px; object-fit:contain; margin-bottom:10px;
+  }
+  .module-card span{ font-weight:700; }
+  

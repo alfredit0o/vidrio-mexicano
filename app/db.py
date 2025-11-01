@@ -2,8 +2,10 @@
 import os, sqlite3
 from flask import g
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(os.path.dirname(BASE_DIR), "vidrio.db")  # archivo en la raíz
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))         # .../app
+DB_PATH  = os.path.abspath(os.path.join(BASE_DIR, "..", "vidrio.db"))  # .../vidrio.db
+
 
 def get_db():
     db = getattr(g, "_database", None)

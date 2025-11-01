@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ 'Nueva' if mode == 'new' else 'Editar' }} medida</h2>
+<form method="post">
+  <label>Nombre* <input name="nombre" value="{{ medida.nombre if medida else '' }}" required></label><br>
+  <label>Unidad* <input name="unidad" value="{{ medida.unidad if medida else '' }}" required></label><br>
+  <label>Descripción <textarea name="descripcion">{{ medida.descripcion if medida else '' }}</textarea></label><br>
+  <button type="submit">Guardar</button>
+  <a href="{{ url_for('medidas.index') }}">Volver</a>
+</form>
+{% endblock %}

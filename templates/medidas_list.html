@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Medidas</h2>
+<a href="{{ url_for('medidas.new') }}">Nueva medida</a>
+<table>
+  <thead><tr><th>ID</th><th>Nombre</th><th>Unidad</th><th>Descripción</th><th></th></tr></thead>
+  <tbody>
+  {% for m in medidas %}
+    <tr>
+      <td>{{ m.id }}</td>
+      <td>{{ m.nombre }}</td>
+      <td>{{ m.unidad }}</td>
+      <td>{{ m.descripcion or '' }}</td>
+      <td>
+        <a href="{{ url_for('medidas.edit', mid=m.id) }}">Editar</a>
+        <form method="post" action="{{ url_for('medidas.delete', mid=m.id) }}" style="display:inline" onsubmit="return confirm('¿Eliminar?')">
+          <button type="submit">Eliminar</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

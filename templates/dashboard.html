@@ -5,6 +5,7 @@
     <div class="card" style="max-width:960px; margin:0 auto;">
       <h2>Hola, {{ user }}</h2>
       <p>Selecciona un módulo:</p>
+
       <div class="module-grid">
         {% for m in modules %}
           <a class="module-card" href="{{ m.href }}">

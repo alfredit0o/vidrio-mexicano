@@ -1,8 +1,6 @@
 # app/blueprints/__init__.py
-from flask import Blueprint, render_template
+from .core import core_bp
 
-core_bp = Blueprint("core", __name__, template_folder="../../templates")
-
-@core_bp.route("/")
-def index():
-    return render_template("module_blank.html", title="Core")
+def register_blueprints(app):
+    app.register_blueprint(core_bp)
+    # aquí luego: app.register_blueprint(clientes_bp), etc.

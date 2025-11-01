@@ -12,15 +12,17 @@
       <!-- templates/base.html -->
       <a class="brand" href="{{ url_for('core.index') }}">vidrio</a>
 
-        <nav class="top-links">
-          {% if session.user_email %}
+      <nav class="top-links">
+        {% if session.user_email %}
           <a href="{{ url_for('core.dashboard') }}">Dashboard</a>
+          <a href="{{ url_for('medidas.index') }}">Medidas</a> <!-- 👈 añadido -->
           <a href="{{ url_for('logout') }}">Cerrar sesión</a>
-          {% else %}
-            <a href="{{ url_for('login') }}">Iniciar sesión</a>
-            <a href="{{ url_for('register') }}">Registrarse</a>
-          {% endif %}
-        </nav>
+        {% else %}
+          <a href="{{ url_for('login') }}">Iniciar sesión</a>
+          <a href="{{ url_for('register') }}">Registrarse</a>
+        {% endif %}
+      </nav>
+      
 
     </header>
 

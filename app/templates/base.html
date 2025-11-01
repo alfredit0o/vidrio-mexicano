@@ -4,17 +4,18 @@
     <meta charset="utf-8">
     <title>Vidrio App</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ config['ASSET_VERSION'] }}">
-  </head>
+    <link rel="stylesheet"
+        href="{{ url_for('core.static', filename='style.css') }}?v={{ config.get('ASSET_VERSION','1') }}">
+</head>
   <body>
     <header class="topbar">
       <!-- templates/base.html -->
-        <a class="brand" href="{{ url_for('root') }}">vidrio</a>
+      <a class="brand" href="{{ url_for('core.index') }}">vidrio</a>
 
         <nav class="top-links">
           {% if session.user_email %}
-            <a href="{{ url_for('dashboard') }}">Dashboard</a>
-            <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+          <a href="{{ url_for('core.dashboard') }}">Dashboard</a>
+          <a href="{{ url_for('logout') }}">Cerrar sesión</a>
           {% else %}
             <a href="{{ url_for('login') }}">Iniciar sesión</a>
             <a href="{{ url_for('register') }}">Registrarse</a>

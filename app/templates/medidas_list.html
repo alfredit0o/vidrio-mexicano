@@ -1,24 +1,79 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Medidas</h2>
-<a href="{{ url_for('medidas.new') }}">Nueva medida</a>
-<table>
-  <thead><tr><th>ID</th><th>Nombre</th><th>Unidad</th><th>Descripción</th><th></th></tr></thead>
-  <tbody>
-  {% for m in medidas %}
-    <tr>
-      <td>{{ m.id }}</td>
-      <td>{{ m.nombre }}</td>
-      <td>{{ m.unidad }}</td>
-      <td>{{ m.descripcion or '' }}</td>
-      <td>
-        <a href="{{ url_for('medidas.edit', mid=m.id) }}">Editar</a>
-        <form method="post" action="{{ url_for('medidas.delete', mid=m.id) }}" style="display:inline" onsubmit="return confirm('¿Eliminar?')">
-          <button type="submit">Eliminar</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<h2>Nueva foto (Medidas)</h2>
+
+<style>
+.video-wrap, .canvas-wrap { display:inline-block; vertical-align:top; margin-right:16px; }
+.controls { margin-top:12px; }
+</style>
+
+<div class="video-wrap">
+  <video id="video" autoplay playsinline style="width:480px; height:auto; background:#000"></video>
+  <div class="controls">
+    <button id="btnShot">📸 Tomar foto</button>
+    <button id="btnRetry" disabled>↩️ Repetir</button>
+  </div>
+</div>
+
+<div class="canvas-wrap">
+  <canvas id="canvas" width="480" height="360" style="border:1px solid #ccc"></canvas>
+  <form id="saveForm" method="post" action="{{ url_for('medidas.new') }}">
+    <p>
+      <label>Nombre*: <input name="nombre" id="nombre" required></label>
+    </p>
+    <input type="hidden" name="dataurl" id="dataurl">
+    <button type="submit" id="btnSave" disabled>💾 Guardar</button>
+  </form>
+</div>
+
+<script>
+(async function() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const btnShot = document.getElementById('btnShot');
+  const btnRetry = document.getElementById('btnRetry');
+  const btnSave = document.getElementById('btnSave');
+  const dataurl = document.getElementById('dataurl');
+
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    video.srcObject = stream;
+  } catch (e) {
+    alert("No se pudo acceder a la cámara: " + e);
+  }
+
+  function drawFrame() {
+    const w = canvas.width, h = canvas.height;
+    const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+    // letterbox
+    const scale = Math.min(w / vw, h / vh);
+    const dw = vw * scale, dh = vh * scale;
+    const dx = (w - dw) / 2, dy = (h - dh) / 2;
+    ctx.fillStyle = "#222"; ctx.fillRect(0,0,w,h);
+    if (vw && vh) ctx.drawImage(video, dx, dy, dw, dh);
+  }
+
+  let rafId = null;
+  function loop() { drawFrame(); rafId = requestAnimationFrame(loop); }
+  video.addEventListener('loadedmetadata', () => { loop(); });
+
+  btnShot.onclick = () => {
+    cancelAnimationFrame(rafId);
+    drawFrame();
+    dataurl.value = canvas.toDataURL("image/png");
+    btnSave.disabled = false;
+    btnRetry.disabled = false;
+    btnShot.disabled = true;
+  };
+
+  btnRetry.onclick = () => {
+    btnShot.disabled = false;
+    btnSave.disabled = true;
+    btnRetry.disabled = true;
+    loop();
+  };
+})();
+</script>
 {% endblock %}

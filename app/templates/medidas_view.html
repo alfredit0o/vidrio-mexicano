@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Foto: {{ nombre }}</h2>
+<p>Por: {{ creado_por }} · {{ created_at }}</p>
+
+<div style="display:flex; gap:16px; align-items:flex-start;">
+  <div>
+    <h4>Original</h4>
+    {% if original_uri %}
+      <img src="{{ original_uri }}" style="max-width:640px; border:1px solid #ddd">
+    {% else %}<em>(sin imagen)</em>{% endif %}
+  </div>
+  <div>
+    <h4>Anotada</h4>
+    {% if anotada_uri %}
+      <img src="{{ anotada_uri }}" style="max-width:640px; border:1px solid #ddd">
+    {% else %}
+      <em>(sin anotaciones)</em><br>
+      <a href="{{ url_for('medidas.annotate', fid=foto_id) }}">➕ Crear anotaciones</a>
+    {% endif %}
+  </div>
+</div>
+
+<p style="margin-top:12px;">
+  <a href="{{ url_for('medidas.annotate', fid=foto_id) }}">✏️ Editar / añadir anotaciones</a> |
+  <a href="{{ url_for('medidas.index') }}">⬅️ Volver al listado</a>
+</p>
+{% endblock %}

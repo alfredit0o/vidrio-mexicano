@@ -3,35 +3,50 @@
 <style>
   :root{
     --ink:#e9eef7; --muted:#9aa3b2; --panel:#121418; --panel2:#191e28; --accent:#4cc9f0;
-    --label:#ffd400; --labelText:#111;
   }
   body{background:#0e0f12;color:var(--ink)}
-  .wrap{max-width:560px;margin:16px auto;padding:8px}
-  .title{margin:0 8px 6px}
-  .hint{margin:0 8px 12px;color:var(--muted);text-align:center}
-  .stage{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:14px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  .wrap{max-width:560px;margin:10px auto;padding:8px}
+  .title{margin:0 8px 4px}
+  .hint{margin:0 8px 10px;color:var(--muted);text-align:center}
+
+  /* Más imagen: alto dinámico */
+  .stage{
+    position:relative;width:100%;
+    height:clamp(360px,70vh,820px);
+    background:#000;border-radius:14px;overflow:hidden;
+    box-shadow:0 8px 24px rgba(0,0,0,.35)
+  }
   video, img, canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-  .reticle{position:absolute;left:50%;top:50%;width:140px;height:140px;transform:translate(-50%,-50%);border:2px solid rgba(255,255,255,.85);border-radius:14px;pointer-events:none}
-  .bar{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:12px;background:var(--panel);border-radius:14px;padding:10px}
-  .btn{border:1px solid #2b3242;background:#0f1218;color:var(--ink);border-radius:12px;padding:10px 14px;cursor:pointer}
+
+  /* Imprescindible en iOS para dibujar con un dedo */
+  #paint{ touch-action:none; }
+  #photo{ touch-action:none; }
+
+  .reticle{
+    position:absolute;left:50%;top:50%;width:120px;height:120px;
+    transform:translate(-50%,-50%);border:2px solid rgba(255,255,255,.7);
+    border-radius:12px;pointer-events:none
+  }
+  .bar{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:10px;background:var(--panel);border-radius:12px;padding:8px}
+  .btn{border:1px solid #2b3242;background:#0f1218;color:var(--ink);border-radius:10px;padding:8px 12px;cursor:pointer}
   .btn[disabled]{opacity:.5;cursor:not-allowed}
-  .shutter{width:64px;height:64px;border-radius:999px;border:4px solid #e9eef7;background:#e9eef7;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.35)}
-  .row{display:flex;gap:8px;margin:10px 0}
+  .shutter{width:56px;height:56px;border-radius:999px;border:4px solid #e9eef7;background:#e9eef7;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .row{display:flex;gap:8px;margin:8px 0}
   .row input{flex:1;padding:10px;border-radius:10px;border:1px solid #2b3242;background:#0f1218;color:var(--ink)}
-  .tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;background:var(--panel2);border-radius:14px;padding:8px}
+  .tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;background:#11161f;border-radius:12px;padding:6px}
   .tool{padding:8px 10px;border-radius:10px;border:1px solid #2b3242;background:#0f1218;color:var(--ink);cursor:pointer;font-size:.95rem}
   .tool.active{outline:2px solid var(--accent)}
   .legend{color:var(--muted);font-size:.9rem;text-align:center;margin-top:6px}
 </style>
 
 <div class="wrap">
-  <h2 class="title">Capturar medida — v2.3</h2>
+  <h2 class="title">Capturar medida — v2.5</h2>
   <p class="hint" id="status">Enmarca el vidrio y toca el botón.</p>
 
   <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
 
-    <!-- Capa de zoom (dos dedos) que envuelve foto + canvas -->
+    <!-- Capa de zoom (dos dedos) -->
     <div id="zoomLayer" style="position:absolute; inset:0; touch-action:none; transform-origin:center center;">
       <img id="photo" alt="captura" style="display:none; width:100%; height:100%; object-fit:cover" />
       <canvas id="paint" style="display:none"></canvas>
@@ -51,7 +66,7 @@
     <button class="btn" id="btnFlip" disabled>Cambiar cámara</button>
   </div>
 
-  <!-- Herramientas (solo Flecha, Texto, Borrar, Limpiar) -->
+  <!-- Herramientas (Flecha, Texto, Borrar, Limpiar) -->
   <div id="editorArea" style="display:none">
     <div class="tools">
       <button class="tool" data-tool="dim">↔ Flecha</button>
@@ -59,7 +74,7 @@
       <button class="tool" data-tool="delete">🗑️ Borrar</button>
       <button class="tool" data-tool="clear">⟲ Limpiar</button>
     </div>
-    <p class="legend" id="legend">↔ Arrastra para crear la flecha. Doble toque para editar la etiqueta.</p>
+    <p class="legend" id="legend">↔ Arrastra para crear la cota. Luego mueve o ajusta puntas. Doble toque para editar la medida.</p>
 
     <div class="bar">
       <button class="btn" id="btnRetake">Repetir</button>
@@ -162,12 +177,12 @@ document.querySelectorAll('.tool').forEach(b=>{
 setTool('dim');
 
 function cx(){ return paint.getContext('2d'); }
-function toCanvasPos(evt){
-  const r=paint.getBoundingClientRect();
-  const client = evt.touches ? evt.touches[0] : (evt.changedTouches ? evt.changedTouches[0] : evt);
-  const x=(client.clientX)-r.left, y=(client.clientY)-r.top;
-  const sx=paint.width/r.width, sy=paint.height/r.height;
-  return {x:x*sx, y:y*sy};
+function toCanvasPos(e){
+  const r = paint.getBoundingClientRect();
+  const x = (e.clientX ?? e.touches?.[0]?.clientX ?? e.changedTouches?.[0]?.clientX) - r.left;
+  const y = (e.clientY ?? e.touches?.[0]?.clientY ?? e.changedTouches?.[0]?.clientY) - r.top;
+  const sx = paint.width / r.width, sy = paint.height / r.height;
+  return { x: x*sx, y: y*sy };
 }
 
 /* ---- dibujo ---- */
@@ -175,18 +190,17 @@ function draw(){
   const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
   shapes.forEach(s=>{
     ctx.save();
-    ctx.lineWidth=4; ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
+    ctx.lineWidth=6;
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+    ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
     ctx.font='32px system-ui, -apple-system, Segoe UI, Roboto';
 
     if(s.type==='dim'){
       const {a,b}=s;
-      // línea
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-      // puntas
       drawArrow(ctx,a,b); drawArrow(ctx,b,a);
-      // etiqueta si existe
       if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label);
-      // handles cuando está activa u hover
       if(s.id===hoverId || s.id===activeId){ drawHandle(ctx,a); drawHandle(ctx,b); }
     }
     else if(s.type==='text'){
@@ -215,9 +229,10 @@ function drawArrow(ctx, p1, p2){
 function drawLabel(ctx, pos, text){
   const pad=10, t=text||''; const w=ctx.measureText(t).width+pad*2, h=38;
   const x=pos.x-w/2, y=pos.y-h/2;
-  ctx.fillStyle='var(--label)'; ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.fillStyle='#ffd400';         // canvas no acepta var() como color
+  ctx.strokeStyle='#333'; ctx.lineWidth=2;
   roundRect(ctx,x,y,w,h,8); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='var(--labelText)'; ctx.textBaseline='middle'; ctx.textAlign='center';
+  ctx.fillStyle='#111'; ctx.textBaseline='middle'; ctx.textAlign='center';
   ctx.fillText(t, x+w/2, y+h/2);
 }
 function drawHandle(ctx, p){
@@ -260,22 +275,30 @@ function initAnnotator(){
   shapes=[]; activeId=null; dragMode=null; dragStart=null; hoverId=null; draw();
   setTool('dim');
 
+  let lastTap=0; // soporte doble toque en iOS
+
   const onDown=(e)=>{
     if(gesture.active) return; // ignorar si está el gesto de zoom
+    paint.setPointerCapture(e.pointerId);
     const p=toCanvasPos(e);
     const hit=hitTest(p); hoverId = hit ? hit.id : null;
+
+    // doble toque manual
+    const now=Date.now();
+    if(now-lastTap<300 && hit){
+      const s=shapes.find(x=>x.id===hit.id);
+      if(s && (s.type==='dim' || s.type==='text')){
+        const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
+        lastTap=0; e.preventDefault(); return;
+      }
+    }
+    lastTap=now;
 
     if(tool==='delete'){
       if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); activeId=null; draw(); }
       return;
     }
-
-    if(tool==='text'){
-      // coloca texto visible de inmediato
-      addShape({type:'text', pos:p, label:'Texto'});
-      draw();
-      return;
-    }
+    if(tool==='text'){ addShape({type:'text', pos:p, label:'Texto'}); draw(); return; }
 
     // tool === 'dim'
     if(hit){
@@ -283,7 +306,6 @@ function initAnnotator(){
       dragStart = p;
       dragMode = hit.part; // 'a' | 'b' | 'line'
     }else{
-      // crear nueva cota arrastrando
       const s={type:'dim', a:p, b:p, label:''};
       addShape(s);
       activeId = s.id;
@@ -300,37 +322,32 @@ function initAnnotator(){
     if(activeId){
       const s=shapes.find(x=>x.id===activeId); if(!s) return;
       if(s.type==='dim'){
-        if(dragMode==='a'){ s.a = p; }
-        else if(dragMode==='b'){ s.b = p; }
-        else if(dragMode==='line' || dragMode==='creating'){
+        if(dragMode==='creating'){            // *** FIX: al crear, solo se estira B
+          s.b = p;
+        }else if(dragMode==='a'){
+          s.a = p;
+        }else if(dragMode==='b'){
+          s.b = p;
+        }else{ // 'line'
           const dx=p.x-dragStart.x, dy=p.y-dragStart.y;
-          s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy;
-          dragStart=p;
+          s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; dragStart=p;
         }
         draw();
       }
       return;
     }
-
-    // hover cuando no arrastramos
-    const hit=hitTest(p);
-    hoverId = hit ? hit.id : null;
-    draw();
+    const hit=hitTest(p); hoverId = hit ? hit.id : null; draw();
     e.preventDefault();
   };
 
-  const onUp=(e)=>{
-    // no pedimos etiqueta aquí; se edita con doble toque
-    activeId=null; dragMode=null; dragStart=null;
-    e.preventDefault();
-  };
+  const onUp=(e)=>{ activeId=null; dragMode=null; dragStart=null; e.preventDefault(); };
 
-  paint.onpointerdown=onDown;
-  paint.onpointermove=onMove;
-  paint.onpointerup=onUp;
-  paint.onpointerleave=onUp;
+  paint.addEventListener('pointerdown', onDown, {passive:false});
+  paint.addEventListener('pointermove', onMove,  {passive:false});
+  paint.addEventListener('pointerup',   onUp,    {passive:false});
+  paint.addEventListener('pointerleave',onUp,    {passive:false});
 
-  // Doble toque/click: editar etiqueta del elemento bajo el dedo
+  // Doble click: navegadores de escritorio
   paint.addEventListener('dblclick', (e)=>{
     const p=toCanvasPos(e);
     const hit=hitTest(p); if(!hit) return;
@@ -368,8 +385,7 @@ zoomLayer.addEventListener('pointerleave', endPointer);
 /* ====== Repetir / Guardar ====== */
 btnRetake.addEventListener('click', async ()=>{
   editorArea.style.display='none'; cameraBar.style.display='flex';
-  // reset zoom
-  gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform();
+  gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform(); // reset zoom
   await startCamera();
 });
 btnSave.addEventListener('click', ()=>{
@@ -378,8 +394,8 @@ btnSave.addEventListener('click', ()=>{
   const out=document.createElement('canvas'); out.width=w; out.height=h;
   const ctx=out.getContext('2d');
   const img=new Image(); img.onload=()=>{
-    ctx.drawImage(img,0,0,w,h);
-    ctx.drawImage(paint,0,0);
+    ctx.drawImage(img,0,0,w,h);      // fondo
+    ctx.drawImage(paint,0,0);        // overlay de anotaciones
     const png=out.toDataURL('image/png');
     dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
   }; img.src=photo.src;

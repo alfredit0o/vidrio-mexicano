@@ -4,6 +4,5 @@ Werkzeug==2.3.7
 itsdangerous==2.2.0
 Jinja2==3.1.6
 
-# Base de datos
 SQLAlchemy==2.0.34
-psycopg[binary]==3.2.1
+psycopg[binary]==3.2.122

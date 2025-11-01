@@ -18,7 +18,6 @@
   .shutter{width:64px;height:64px;border-radius:999px;border:4px solid #e9eef7;background:#e9eef7;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.35)}
   .row{display:flex;gap:8px;margin:10px 0}
   .row input{flex:1;padding:10px;border-radius:10px;border:1px solid #2b3242;background:#0f1218;color:var(--ink)}
-  /* Toolbar dibujo */
   .tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;background:var(--panel2);border-radius:14px;padding:8px}
   .tool{padding:8px 10px;border-radius:10px;border:1px solid #2b3242;background:#0f1218;color:var(--ink);cursor:pointer;font-size:.95rem}
   .tool.active{outline:2px solid var(--accent)}
@@ -26,23 +25,24 @@
 </style>
 
 <div class="wrap">
-  <h2 class="title">Capturar medida</h2>
+  <h2 class="title">Capturar medida — v2.2</h2>
   <p class="hint" id="status">Enmarca el vidrio y toca el botón.</p>
 
   <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
-    <img id="photo" alt="captura" style="display:none" />
-    <canvas id="paint" style="display:none"></canvas> <!-- canvas de edición -->
+
+    <!-- Capa de zoom (dos dedos) que envuelve foto + canvas -->
+    <div id="zoomLayer" style="position:absolute; inset:0; touch-action:none; transform-origin:center center;">
+      <img id="photo" alt="captura" style="display:none; width:100%; height:100%; object-fit:cover" />
+      <canvas id="paint" style="display:none"></canvas>
+    </div>
+
     <div class="reticle" id="reticle"></div>
   </div>
 
   <div class="row">
     <input type="text" id="nombre" placeholder="Nombre de la foto" />
   </div>
-
-  <h2 class="title">Capturar medida — v2.1</h2>
-<script>console.log("medidas_capture v2.1");</script>
-
 
   <!-- Controles de cámara -->
   <div class="bar" id="cameraBar">
@@ -51,18 +51,15 @@
     <button class="btn" id="btnFlip" disabled>Cambiar cámara</button>
   </div>
 
-  <!-- Herramientas estilo Bosch (se muestran tras la captura) -->
+  <!-- Herramientas (solo Flecha, Texto, Borrar, Limpiar) -->
   <div id="editorArea" style="display:none">
     <div class="tools">
       <button class="tool" data-tool="dim">↔ Flecha</button>
-      <button class="tool" data-tool="rect">■ Superficie</button>
-      <button class="tool" data-tool="angle">∠ Ángulo</button>
       <button class="tool" data-tool="text">T Texto</button>
-      <button class="tool" data-tool="move">🖐️ Mover</button>
       <button class="tool" data-tool="delete">🗑️ Borrar</button>
       <button class="tool" data-tool="clear">⟲ Limpiar</button>
     </div>
-    <p class="legend" id="legend">Elegí una herramienta y toca en la imagen.</p>
+    <p class="legend" id="legend">↔ Arrastra para crear la flecha. Doble toque para editar la etiqueta.</p>
 
     <div class="bar">
       <button class="btn" id="btnRetake">Repetir</button>
@@ -77,10 +74,10 @@
 </div>
 
 <script>
-/* ====== Cámara: una sola activa ====== */
+/* ====== Cámara (una sola activa) ====== */
 let stream=null, wakeLock=null, devices=[], envIds=[], userIds=[], currentList=[], idx=0, usingBack=true;
 const $=id=>document.getElementById(id);
-const video=$('video'), photo=$('photo'), paint=$('paint');
+const video=$('video'), photo=$('photo'), paint=$('paint'), zoomLayer=$('zoomLayer');
 const btnStart=$('btnStart'), btnShot=$('btnShot'), btnFlip=$('btnFlip');
 const btnRetake=$('btnRetake'), btnSave=$('btnSave');
 const statusEl=$('status'), legendEl=$('legend');
@@ -109,7 +106,6 @@ async function startCameraById(deviceId){
     const constraints={ video:{ deviceId:deviceId?{exact:deviceId}:undefined, facingMode: deviceId?undefined:{ideal:usingBack?'environment':'user'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
     stream=await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject=stream; await video.play(); await requestWakeLock();
-    // UI
     video.style.display='block'; photo.style.display='none'; paint.style.display='none';
     btnShot.disabled=false; statusEl.textContent='Enmarca el vidrio y toca el botón.';
   }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
@@ -122,42 +118,40 @@ btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerat
 /* ====== Captura → Editor ====== */
 btnShot.addEventListener('click', async ()=>{
   if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
-  // Congela frame como <img>
   const w=video.videoWidth, h=video.videoHeight;
   const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
   tmp.getContext('2d').drawImage(video,0,0,w,h);
   const png=tmp.toDataURL('image/png');
   photo.src=png;
 
-  // Muestra editor
-  video.style.display='none'; photo.style.display='block';
-  cameraBar.style.display='none'; editorArea.style.display='block';
-  paint.width=photo.naturalWidth; paint.height=photo.naturalHeight;
-  paint.style.display='block';
+  // prepara editor
+  paint.width=w; paint.height=h;
+  paint.style.display='block'; photo.style.display='block';
+  video.style.display='none'; cameraBar.style.display='none'; editorArea.style.display='block';
   btnSave.disabled=false;
 
   stopStream(); if(wakeLock){ try{ await wakeLock.release(); }catch(_){} }
   statusEl.textContent='Arrastra para medir. Doble toque para editar valor.';
-  // Inicializa motor de anotación
   initAnnotator();
 });
 
-/* ====== Editor tipo Bosch (flecha, superficie, ángulo, texto) ====== */
+/* ====== Editor (Flecha + Texto) ====== */
 let tool='dim', shapes=[], activeId=null, dragStart=null, hoverId=null;
 
 function setLegend(){
   const map={
-    dim:'↔ Arrastra dos puntos. Luego dobla/edita la etiqueta.',
-    rect:'Arrastra un rectángulo. Doble toque para editar texto.',
-    angle:'Marca tres puntos (A, vértice, B).',
+    dim:'↔ Arrastra para crear la flecha. Doble toque para editar la etiqueta.',
     text:'Toca para colocar texto.',
-    move:'Arrastra elementos para reposicionar.',
     delete:'Toca un elemento para borrarlo.',
     clear:'Limpia todas las anotaciones.'
   };
   legendEl.textContent=map[tool]||'';
 }
-function setTool(t){ tool=t; document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t)); setLegend(); }
+function setTool(t){
+  tool=t;
+  document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
+  setLegend();
+}
 document.querySelectorAll('.tool').forEach(b=>{
   b.addEventListener('click', ()=>{
     const t=b.dataset.tool;
@@ -170,52 +164,32 @@ setTool('dim');
 function cx(){ return paint.getContext('2d'); }
 function toCanvasPos(evt){
   const r=paint.getBoundingClientRect();
-  const x=(evt.touches?evt.touches[0].clientX:evt.clientX)-r.left;
-  const y=(evt.touches?evt.touches[0].clientY:evt.clientY)-r.top;
+  const client = evt.touches ? evt.touches[0] : (evt.changedTouches ? evt.changedTouches[0] : evt);
+  const x=(client.clientX)-r.left, y=(client.clientY)-r.top;
   const sx=paint.width/r.width, sy=paint.height/r.height;
   return {x:x*sx, y:y*sy};
 }
 
-function addLabelAt(shape, valueText){
-  shape.label=valueText||shape.label||'';
-}
-
 function draw(){
   const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
-  // Dibujo semivectorial encima de la foto
   shapes.forEach(s=>{
     ctx.save();
     ctx.lineWidth=4; ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
     ctx.font='32px system-ui, -apple-system, Segoe UI, Roboto';
     if(s.type==='dim'){
-      // línea con puntas
       const {a,b}=s;
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
       drawArrow(ctx,a,b); drawArrow(ctx,b,a);
       drawLabel(ctx, mid(a,b), s.label||'');
-    }else if(s.type==='rect'){
-      const {x,y,w,h}=normRect(s);
-      ctx.globalAlpha=0.15; ctx.fillRect(x,y,w,h);
-      ctx.globalAlpha=1; ctx.strokeRect(x,y,w,h);
-      drawLabel(ctx,{x:x+w/2,y:y+h/2},s.label||'');
-    }else if(s.type==='angle'){
-      const {a,o,b}=s;
-      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(a.x,a.y); ctx.moveTo(o.x,o.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-      const ang = Math.abs(angle(a,o,b)).toFixed(1)+'°';
-      drawLabel(ctx,o,s.label||ang);
     }else if(s.type==='text'){
       drawLabel(ctx,s.pos,s.label||'Texto');
     }
     ctx.restore();
   });
-  // hover
   if(hoverId!=null){
     const s=shapes.find(x=>x.id===hoverId); if(!s) return;
     const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=3;
-    if(s.type==='rect'){ const {x,y,w,h}=normRect(s); ctx.strokeRect(x,y,w,h); }
-    else if(s.type==='dim'){ ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke(); }
-    else if(s.type==='angle'){ ctx.beginPath(); ctx.arc(s.o.x,s.o.y,28,0,Math.PI*2); ctx.stroke(); }
-    else if(s.type==='text'){ /* no-op */ }
+    if(s.type==='dim'){ ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke(); }
     ctx.restore();
   }
 }
@@ -229,8 +203,7 @@ function drawArrow(ctx, p1, p2){
   ctx.stroke();
 }
 function drawLabel(ctx, pos, text){
-  const pad=10; const t=text||'';
-  const metrics=ctx.measureText(t); const w=metrics.width+pad*2; const h=38;
+  const pad=10, t=text||''; const w=ctx.measureText(t).width+pad*2, h=38;
   const x=pos.x-w/2, y=pos.y-h/2;
   ctx.fillStyle='var(--label)'; ctx.strokeStyle='#333'; ctx.lineWidth=2;
   roundRect(ctx,x,y,w,h,8); ctx.fill(); ctx.stroke();
@@ -239,38 +212,19 @@ function drawLabel(ctx, pos, text){
 }
 function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
-function angle(a,o,b){
-  const v1={x:a.x-o.x,y:a.y-o.y}, v2={x:b.x-o.x,y:b.y-o.y};
-  const dot=v1.x*v2.x+v1.y*v2.y;
-  const mag1=Math.hypot(v1.x,v1.y), mag2=Math.hypot(v2.x,v2.y);
-  return Math.acos(Math.max(-1,Math.min(1,dot/(mag1*mag2))))*180/Math.PI;
-}
-function normRect(s){ const x=Math.min(s.a.x,s.b.x), y=Math.min(s.a.y,s.b.y); const w=Math.abs(s.a.x-s.b.x), h=Math.abs(s.a.y-s.b.y); return {x,y,w,h}; }
-
-function hitTest(p){
-  // selección simple por proximidad
-  for(let i=shapes.length-1;i>=0;i--){
-    const s=shapes[i];
-    if(s.type==='dim'){
-      const d=distToSegment(p,s.a,s.b); if(d<18) return s.id;
-    }else if(s.type==='rect'){
-      const {x,y,w,h}=normRect(s); if(p.x>=x&&p.x<=x+w&&p.y>=y&&p.y<=y+h) return s.id;
-    }else if(s.type==='angle'){
-      const r=32; if(Math.hypot(p.x-s.o.x,p.y-s.o.y)<r) return s.id;
-    }else if(s.type==='text'){
-      // aproximado: caja 140x40 centrada
-      if(Math.abs(p.x-s.pos.x)<80&&Math.abs(p.y-s.pos.y)<30) return s.id;
-    }
-  }
-  return null;
-}
 function distToSegment(p,a,b){
   const l2=(b.x-a.x)**2+(b.y-a.y)**2; if(l2===0) return Math.hypot(p.x-a.x,p.y-a.y);
   let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));
   const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)}; return Math.hypot(p.x-proj.x,p.y-proj.y);
 }
-
-/* interacción */
+function hitTest(p){
+  for(let i=shapes.length-1;i>=0;i--){
+    const s=shapes[i];
+    if(s.type==='dim'){ if(distToSegment(p,s.a,s.b)<18) return s.id; }
+    else if(s.type==='text'){ if(Math.abs(p.x-s.pos.x)<80&&Math.abs(p.y-s.pos.y)<30) return s.id; }
+  }
+  return null;
+}
 function promptLabel(defaultText){
   const v=prompt('Valor/etiqueta (ej: 386 mm):', defaultText||''); return v==null?null:v;
 }
@@ -280,90 +234,97 @@ function initAnnotator(){
   shapes=[]; activeId=null; dragStart=null; hoverId=null; draw();
   setTool('dim');
 
-  let angleStep=0; // para herramienta ángulo: 0=A,1=O,2=B
-
   const onDown=(e)=>{
+    if(gesture.active) return; // si estamos pinch/zoom, ignorar
     const p=toCanvasPos(e); hoverId=hitTest(p); activeId=hoverId; dragStart=p;
     if(tool==='delete'){ if(activeId!=null){ shapes=shapes.filter(s=>s.id!==activeId); activeId=null; draw(); } return; }
-    if(tool==='move'){ return; }
-
-    if(tool==='dim'){ addShape({type:'dim', a:p, b:p, label:'↔'}); activeId=shapes[shapes.length-1].id; }
-    else if(tool==='rect'){ addShape({type:'rect', a:p, b:p, label:'Superficie'}); activeId=shapes[shapes.length-1].id; }
-    else if(tool==='angle'){
-      if(angleStep===0){ addShape({type:'angle', a:p, o:p, b:p}); activeId=shapes[shapes.length-1].id; angleStep=1; legendEl.textContent='Marca el vértice'; }
-      else if(angleStep===1){ const s=shapes.find(x=>x.id===activeId); s.o=p; angleStep=2; legendEl.textContent='Marca el segundo punto'; draw(); }
-      else { const s=shapes.find(x=>x.id===activeId); s.b=p; angleStep=0; const val=promptLabel(Math.abs(angle(s.a,s.o,s.b)).toFixed(1)+' °'); if(val!==null) s.label=val; draw(); }
-    }
+    if(tool==='dim'){ addShape({type:'dim', a:p, b:p, label:''}); activeId=shapes[shapes.length-1].id; }
     else if(tool==='text'){ const val=promptLabel('Texto'); if(val!==null) addShape({type:'text', pos:p, label:val}); }
     e.preventDefault();
   };
   const onMove=(e)=>{
+    if(gesture.active) return;
     const p=toCanvasPos(e);
-    if(tool==='move'){
-      if(activeId!=null && dragStart){ // arrastra todo el shape
-        const s=shapes.find(x=>x.id===activeId); if(!s) return;
-        const dx=p.x-dragStart.x, dy=p.y-dragStart.y; dragStart=p;
-        if(s.type==='dim'){ s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; }
-        else if(s.type==='rect'){ s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; }
-        else if(s.type==='angle'){ s.a.x+=dx; s.a.y+=dy; s.o.x+=dx; s.o.y+=dy; s.b.x+=dx; s.b.y+=dy; }
-        else if(s.type==='text'){ s.pos.x+=dx; s.pos.y+=dy; }
-        draw(); return;
-      }
-    }
     if(activeId!=null && dragStart){
       const s=shapes.find(x=>x.id===activeId); if(!s) return;
-      if(s.type==='dim'){ s.b=p; }
-      else if(s.type==='rect'){ s.b=p; }
-      draw();
+      if(s.type==='dim'){ s.b=p; draw(); }
     }else{
       hoverId=hitTest(p); draw();
     }
     e.preventDefault();
   };
   const onUp=(e)=>{
+    if(gesture.active) return;
     if(activeId!=null){
       const s=shapes.find(x=>x.id===activeId);
-      if(s?.type==='dim'){ const val=promptLabel(s.label&&s.label!=='↔'?s.label:''); if(val!==null) s.label=val||s.label; }
-      if(s?.type==='rect'){ const val=promptLabel(s.label); if(val!==null) s.label=val; }
+      if(s?.type==='dim'){
+        const val=promptLabel(s.label||''); if(val!==null) s.label=val;
+      }
     }
     activeId=null; dragStart=null; draw();
     e.preventDefault();
   };
+
   paint.onpointerdown=onDown;
   paint.onpointermove=onMove;
   paint.onpointerup=onUp;
   paint.onpointerleave=onUp;
+
+  // Doble click/tap para editar etiqueta del elemento bajo el dedo
+  paint.addEventListener('dblclick', (e)=>{
+    const p=toCanvasPos(e); const id=hitTest(p); if(id==null) return;
+    const s=shapes.find(x=>x.id===id); const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
+  });
 }
+
+/* ====== Pinch-to-zoom (dos dedos) en zoomLayer ====== */
+const gesture = { active:false, scale:1, tx:0, ty:0, startDist:0, startCx:0, startCy:0, startTx:0, startTy:0, startScale:1 };
+const pointers = new Map();
+function setTransform(){ zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
+zoomLayer.addEventListener('pointerdown', (e)=>{ zoomLayer.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size===2){ const [p1,p2]=[...pointers.values()]; gesture.active=true;
+    gesture.startDist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
+    gesture.startCx=(p1.x+p2.x)/2; gesture.startCy=(p1.y+p2.y)/2;
+    gesture.startTx=gesture.tx; gesture.startTy=gesture.ty; gesture.startScale=gesture.scale; }
+});
+zoomLayer.addEventListener('pointermove', (e)=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(gesture.active && pointers.size===2){ const [p1,p2]=[...pointers.values()];
+    const dist=Math.hypot(p2.x-p1.x,p2.y-p1.y), cx=(p1.x+p2.x)/2, cy=(p1.y+p2.y)/2;
+    const ds=dist/gesture.startDist;
+    gesture.scale=Math.min(3,Math.max(1,gesture.startScale*ds));
+    gesture.tx=gesture.startTx+(cx-gesture.startCx); gesture.ty=gesture.startTy+(cy-gesture.startCy);
+    setTransform(); }
+},{passive:false});
+function endPointer(e){ pointers.delete(e.pointerId); if(pointers.size<2){ gesture.active=false; } }
+zoomLayer.addEventListener('pointerup', endPointer);
+zoomLayer.addEventListener('pointercancel', endPointer);
+zoomLayer.addEventListener('pointerleave', endPointer);
 
 /* ====== Repetir / Guardar ====== */
 btnRetake.addEventListener('click', async ()=>{
   editorArea.style.display='none'; cameraBar.style.display='flex';
+  // reset zoom
+  gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform();
   await startCamera();
 });
-
 btnSave.addEventListener('click', ()=>{
   if(!nombre.value.trim()){ alert('Pon un nombre a la foto.'); return; }
-  // Render final: foto + shapes -> PNG
   const w=photo.naturalWidth, h=photo.naturalHeight;
   const out=document.createElement('canvas'); out.width=w; out.height=h;
   const ctx=out.getContext('2d');
   const img=new Image(); img.onload=()=>{
     ctx.drawImage(img,0,0,w,h);
-    // copiar overlay
     ctx.drawImage(paint,0,0);
     const png=out.toDataURL('image/png');
-    dataurl.value=png;
-    campoNombre.value=nombre.value.trim();
-    form.submit();
-  };
-  img.src=photo.src;
+    dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
+  }; img.src=photo.src;
 });
 
 /* Limpieza */
 window.addEventListener('pagehide', stopStream);
 window.addEventListener('beforeunload', stopStream);
 
-/* Autoinicio (si el navegador lo permite) */
+/* Autoinicio */
 document.addEventListener('DOMContentLoaded', ()=>{ startCamera().catch(()=>{}); });
 </script>
 {% endblock %}

@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template
-from .medidas import medidas_bp  # <-- importa el nuevo BP
+from .medidas import medidas_bp   # <--- IMPORTA
 
 core = Blueprint("core", __name__, template_folder="../templates", static_folder="../static")
 
@@ -13,4 +13,4 @@ def dashboard():
 
 def register_blueprints(app):
     app.register_blueprint(core)
-    app.register_blueprint(medidas_bp)   # <-- registra
+    app.register_blueprint(medidas_bp)  # <--- REGISTRA

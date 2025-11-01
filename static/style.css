@@ -215,3 +215,5 @@
   }
   .module-card span{ font-weight:700; }
   
+  #paint{ touch-action:none; }       /* 1 dedo = dibujar sin scroll */
+  #photo{ touch-action:none; }       /* evita que Safari “mueva” la imagen */

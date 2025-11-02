@@ -2,25 +2,22 @@
 {% block content %}
 <style>
   :root{
-    --ink:#e9eef7; --muted:#9aa3b2; --panel:#121418; --panel2:#191e28; --accent:#4cc9f0;
+    --ink:#e9eef7; --muted:#9aa3b2; --panel:#121418; --accent:#4cc9f0;
   }
   body{background:#0e0f12;color:var(--ink)}
   .wrap{max-width:560px;margin:10px auto;padding:8px}
   .title{margin:0 8px 4px}
   .hint{margin:0 8px 10px;color:var(--muted);text-align:center}
 
-  /* Más imagen: alto dinámico */
   .stage{
     position:relative;width:100%;
     height:clamp(360px,70vh,820px);
     background:#000;border-radius:14px;overflow:hidden;
     box-shadow:0 8px 24px rgba(0,0,0,.35)
   }
-  video, img, canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-
-  /* Z-index correcto: foto debajo, canvas encima */
-  #photo{ touch-action:none; z-index:1; }
-  #paint{ touch-action:none; z-index:2; }
+  video, img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  /* Canvas de dibujo va al tamaño visible (suave) */
+  #paint{ position:absolute; inset:0; width:100%; height:100%; touch-action:none; }
 
   .reticle{
     position:absolute;left:50%;top:50%;width:120px;height:120px;
@@ -40,17 +37,17 @@
 </style>
 
 <div class="wrap">
-  <h2 class="title">Capturar medida — v2.6</h2>
+  <h2 class="title">Capturar medida — líneas rectas</h2>
   <p class="hint" id="status">Enmarca el vidrio y toca el botón.</p>
 
   <div class="stage" id="stage">
     <video id="video" autoplay playsinline muted></video>
 
-    <!-- Capa de zoom (dos dedos) -->
-    <div id="zoomLayer" style="position:absolute; inset:0; touch-action:none; transform-origin:center center;">
-      <img id="photo" alt="captura" style="display:none; width:100%; height:100%; object-fit:cover" />
-      <canvas id="paint" style="display:none"></canvas>
-    </div>
+    <!-- Fondo de la foto a resolución completa (para exportar) -->
+    <img id="photo" alt="captura" style="display:none" />
+
+    <!-- Canvas ligero (del tamaño visible) para anotar sin trabas -->
+    <canvas id="paint"></canvas>
 
     <div class="reticle" id="reticle"></div>
   </div>
@@ -66,15 +63,15 @@
     <button class="btn" id="btnFlip" disabled>Cambiar cámara</button>
   </div>
 
-  <!-- Herramientas (Flecha, Texto, Borrar, Limpiar) -->
+  <!-- Herramientas (sólo Cota, Texto, Borrar, Limpiar) -->
   <div id="editorArea" style="display:none">
     <div class="tools">
-      <button class="tool" data-tool="dim">↔ Flecha</button>
+      <button class="tool" data-tool="dim">↔ Cota</button>
       <button class="tool" data-tool="text">T Texto</button>
       <button class="tool" data-tool="delete">🗑️ Borrar</button>
       <button class="tool" data-tool="clear">⟲ Limpiar</button>
     </div>
-    <p class="legend" id="legend">↔ Arrastra para crear la cota. Mueve puntas o la línea. Doble toque / mantener para editar.</p>
+    <p class="legend" id="legend">Cota: pulsa y arrastra (línea recta). Ajusta con los puntos. Doble toque para poner número.</p>
 
     <div class="bar">
       <button class="btn" id="btnRetake">Repetir</button>
@@ -89,336 +86,377 @@
 </div>
 
 <script>
-  /* ====== Cámara (igual que antes) ====== */
-  let stream=null, wakeLock=null, devices=[], envIds=[], userIds=[], currentList=[], idx=0, usingBack=true;
-  const $=id=>document.getElementById(id);
-  const video=$('video'), photo=$('photo'), paint=$('paint'), zoomLayer=$('zoomLayer');
-  const btnStart=$('btnStart'), btnShot=$('btnShot'), btnFlip=$('btnFlip');
-  const btnRetake=$('btnRetake'), btnSave=$('btnSave');
-  const statusEl=$('status'), legendEl=$('legend');
-  const nombre=$('nombre'), campoNombre=$('campoNombre'), dataurl=$('dataurl'), form=$('form');
-  const cameraBar=$('cameraBar'), editorArea=$('editorArea');
-  
-  function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
-  async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null}); } }catch(_){} }
-  async function enumerateCameras(){
-    const list=await navigator.mediaDevices.enumerateDevices();
-    devices=list.filter(d=>d.kind==='videoinput');
-    envIds=[]; userIds=[];
-    for(const d of devices){
-      const L=d.label.toLowerCase();
-      const isBack=L.includes('back')||L.includes('rear')||L.includes('environment');
-      const isFront=L.includes('front')||L.includes('user');
-      if(isBack) envIds.push(d.deviceId); else if(isFront) userIds.push(d.deviceId); else envIds.push(d.deviceId);
+/* ========= Cámara ========= */
+let stream=null, wakeLock=null, devices=[], envIds=[], userIds=[], currentList=[], idx=0, usingBack=true;
+const $=id=>document.getElementById(id);
+const video=$('video'), photo=$('photo'), paint=$('paint');
+const btnStart=$('btnStart'), btnShot=$('btnShot'), btnFlip=$('btnFlip');
+const btnRetake=$('btnRetake'), btnSave=$('btnSave');
+const statusEl=$('status'), legendEl=$('legend');
+const nombre=$('nombre'), campoNombre=$('campoNombre'), dataurl=$('dataurl'), form=$('form');
+const cameraBar=$('cameraBar'), editorArea=$('editorArea');
+
+function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null}); } }catch(_){} }
+async function enumerateCameras(){
+  const list=await navigator.mediaDevices.enumerateDevices();
+  devices=list.filter(d=>d.kind==='videoinput');
+  envIds=[]; userIds=[];
+  for(const d of devices){
+    const L=d.label.toLowerCase();
+    const isBack=L.includes('back')||L.includes('rear')||L.includes('environment');
+    const isFront=L.includes('front')||L.includes('user');
+    if(isBack) envIds.push(d.deviceId); else if(isFront) userIds.push(d.deviceId); else envIds.push(d.deviceId);
+  }
+  currentList=(usingBack&&envIds.length)?envIds:(userIds.length?userIds:devices.map(d=>d.deviceId));
+  idx=0; btnFlip.disabled = devices.length<2; btnFlip.style.display=devices.length<2?'none':'inline-block';
+}
+async function startCameraById(deviceId){
+  try{
+    if(!navigator.mediaDevices?.getUserMedia){ alert('Requiere HTTPS o localhost'); return; }
+    stopStream();
+    const constraints={ video:{ deviceId:deviceId?{exact:deviceId}:undefined, facingMode: deviceId?undefined:{ideal:usingBack?'environment':'user'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
+    stream=await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject=stream; await video.play(); await requestWakeLock();
+    resizePaintToDisplay();
+    video.style.display='block'; photo.style.display='none';
+    btnShot.disabled=false; statusEl.textContent='Enmarca el vidrio y toca el botón.';
+  }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
+}
+async function startCamera(){ await enumerateCameras(); const id=currentList[idx]||devices[0]?.deviceId||null; await startCameraById(id); }
+btnStart.addEventListener('click', startCamera);
+btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerateCameras(); idx=(idx+1)%currentList.length; await startCameraById(currentList[idx]); });
+
+/* ========= Captura → Editor ========= */
+btnShot.addEventListener('click', async ()=>{
+  if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
+  const w=video.videoWidth, h=video.videoHeight;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(video,0,0,w,h);
+  const png=c.toDataURL('image/png');
+
+  photo.onload = ()=>{
+    video.style.display='none';
+    photo.style.display='block';
+    cameraBar.style.display='none';
+    editorArea.style.display='block';
+    btnSave.disabled=false;
+
+    resizePaintToDisplay();  // canvas suave al tamaño visible
+    initAnnotator();
+    statusEl.textContent='Cota: arrastra recta. Ajusta con los puntos. Doble toque para número.';
+  };
+  photo.src=png;
+
+  stopStream(); if(wakeLock){ try{ await wakeLock.release(); }catch(_){} }
+});
+
+/* ========= Editor (líneas rectas) ========= */
+/** Guardamos las figuras en coords NORMALIZADAS (0-1) respecto a la imagen.
+ *  Dibujamos y hacemos hit-test en coords de PANTALLA (rápido).
+ *  Al guardar, escalamos a tamaño real de la foto.
+ */
+let tool='dim', shapes=[], active=null, drag=null;
+let dirty=true, rafId=null;
+
+function setTool(t){
+  tool=t;
+  document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
+  if(legendEl){
+    legendEl.textContent = (t==='dim')
+      ? 'Cota: pulsa y arrastra para línea recta. Ajusta con puntas. Doble toque para poner número.'
+      : (t==='text' ? 'Toca para poner texto. Doble toque para editar; arrastra para mover.' :
+        (t==='delete' ? 'Toca un elemento para borrarlo.' :
+        ''));
+  }
+}
+
+function resizePaintToDisplay(){
+  // Canvas igual a tamaño visible del contenedor (para suavidad)
+  const r = paint.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio||1);
+  paint.width = Math.floor(r.width * dpr);
+  paint.height= Math.floor(r.height * dpr);
+  paint.style.width = r.width + 'px';
+  paint.style.height= r.height + 'px';
+  markDirty();
+}
+window.addEventListener('resize', resizePaintToDisplay);
+
+/* ---- utilidades ---- */
+const ctx = ()=>paint.getContext('2d');
+const DPR = ()=>Math.max(1, window.devicePixelRatio||1);
+function markDirty(){ dirty=true; if(!rafId){ rafId=requestAnimationFrame(loop); } }
+function loop(){ if(dirty){ draw(); dirty=false; } rafId=requestAnimationFrame(loop); }
+
+function imgSize(){ return {w: photo.naturalWidth||1, h: photo.naturalHeight||1}; }
+function displaySize(){ return {w: paint.width, h: paint.height}; }
+
+// Normalizado <-> Pantalla
+function n2s(p){ const {w,h}=displaySize(); return {x:p.x*w, y:p.y*h}; }
+function s2n(p){ const {w,h}=displaySize(); return {x: p.x/w, y: p.y/h}; }
+
+// Snapping: horizontal/vertical si el ángulo es cercano (±15°)
+function snapLine(a,b){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  if(Math.abs(dx) < Math.abs(dy)*0.268){ // ~tan(15°)
+    // casi vertical -> dx ~ 0
+    return {x:a.x, y:b.y};
+  }else if(Math.abs(dy) < Math.abs(dx)*0.268){
+    // casi horizontal -> dy ~ 0
+    return {x:b.x, y:a.y};
+  }
+  return b; // libre
+}
+
+// Métricas en PANTALLA
+function th(){
+  const base=16*DPR();
+  return {
+    line: 3*DPR(),
+    arrow: 10*DPR(),
+    handle: 10*DPR(),
+    hitPt2: (20*DPR())**2,
+    hitSeg2:(24*DPR())**2,
+    labelPad: 8*DPR(),
+    labelH: 28*DPR(),
+    labelRad: 6*DPR(),
+    labelWmin: 64*DPR(),
+    font: 16*DPR()
+  };
+}
+
+/* ---- Dibujo (pantalla) ---- */
+function draw(){
+  const c=ctx(), {w,h}=displaySize(), T=th();
+  c.clearRect(0,0,w,h);
+  c.lineCap='round'; c.lineJoin='round'; c.lineWidth=T.line;
+  c.strokeStyle='#ffe600'; c.fillStyle='#ffe600';
+  c.font=`${T.font}px system-ui, -apple-system, Segoe UI, Roboto`;
+
+  shapes.forEach(s=>{
+    if(s.type==='dim'){
+      const a=n2s(s.a), b=n2s(s.b);
+      // línea
+      c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke();
+      // puntas
+      arrow(c,a,b,T.arrow); arrow(c,b,a,T.arrow);
+      // etiqueta si hay
+      if(s.label && s.label.trim()){
+        const m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+        drawLabel(c, m, s.label, T);
+      }
+      // handles grandes siempre visibles
+      drawHandle(c,a,T.handle);
+      drawHandle(c,b,T.handle);
+    }else if(s.type==='text'){
+      const p=n2s(s.pos);
+      drawLabel(c, p, s.label||'Texto', T);
     }
-    currentList=(usingBack&&envIds.length)?envIds:(userIds.length?userIds:devices.map(d=>d.deviceId));
-    idx=0;
-    btnFlip.disabled = devices.length<2; btnFlip.style.display=devices.length<2?'none':'inline-block';
-  }
-  async function startCameraById(deviceId){
-    try{
-      if(!navigator.mediaDevices?.getUserMedia){ alert('Requiere HTTPS o localhost'); return; }
-      stopStream();
-      const constraints={ video:{ deviceId:deviceId?{exact:deviceId}:undefined, facingMode: deviceId?undefined:{ideal:usingBack?'environment':'user'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
-      stream=await navigator.mediaDevices.getUserMedia(constraints);
-      video.srcObject=stream; await video.play(); await requestWakeLock();
-      video.style.display='block'; photo.style.display='none'; paint.style.display='none';
-      btnShot.disabled=false; statusEl.textContent='Enmarca el vidrio y toca el botón.';
-    }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
-  }
-  async function startCamera(){ await enumerateCameras(); const id=currentList[idx]||devices[0]?.deviceId||null; await startCameraById(id); }
-  btnStart.addEventListener('click', startCamera);
-  btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerateCameras(); idx=(idx+1)%currentList.length; await startCameraById(currentList[idx]); });
-  
-  /* ====== Captura → Editor (espera onload) ====== */
-  btnShot.addEventListener('click', async ()=>{
-    if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
-    const w=video.videoWidth, h=video.videoHeight;
-    const c=document.createElement('canvas'); c.width=w; c.height=h;
-    c.getContext('2d').drawImage(video,0,0,w,h);
-    const png=c.toDataURL('image/png');
-  
-    photo.onload = ()=>{
-      paint.width = photo.naturalWidth;
-      paint.height= photo.naturalHeight;
-      paint.style.display='block';
-      photo.style.display='block';
-      video.style.display='none';
-      cameraBar.style.display='none';
-      editorArea.style.display='block';
-      btnSave.disabled=false;
-      statusEl.textContent='↔ Arrastra para crear. Toca línea/etiqueta para mover. Doble toque para editar.';
-      initAnnotator();
-    };
-    photo.src=png;
-  
-    stopStream(); if(wakeLock){ try{ await wakeLock.release(); }catch(_){} }
   });
-  
-  /* ====== Editor (Flecha + Texto) ====== */
-  let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null;
-  let dirty = true;           // bandera de dibujo
-  let fontPx = 20;            // cacheado (se recalcula al dibujar)
-  function markDirty(){ dirty = true; }
-  
-  /* --- utilidades dependientes de pantalla --- */
-  function pxToCanvas(px){
-    const r = paint.getBoundingClientRect();
-    const sx = paint.width / r.width;
-    return px * sx;
+}
+function arrow(c,p1,p2,size){
+  const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x);
+  c.beginPath();
+  c.moveTo(p1.x,p1.y);
+  c.lineTo(p1.x+size*Math.cos(ang+Math.PI/6), p1.y+size*Math.sin(ang+Math.PI/6));
+  c.moveTo(p1.x,p1.y);
+  c.lineTo(p1.x+size*Math.cos(ang-Math.PI/6), p1.y+size*Math.sin(ang-Math.PI/6));
+  c.stroke();
+}
+function drawHandle(c,p,r){
+  c.save();
+  c.fillStyle='#4cc9f0'; c.strokeStyle='#0c1724'; c.lineWidth=Math.max(1, r*0.2);
+  c.beginPath(); c.arc(p.x,p.y,r,0,Math.PI*2); c.fill(); c.stroke();
+  c.restore();
+}
+function drawLabel(c, center, text, T){
+  const pad=T.labelPad;
+  const w=Math.max(T.labelWmin, c.measureText(text).width + pad*2);
+  const h=T.labelH;
+  const x=center.x - w/2, y=center.y - h/2;
+  roundRect(c, x,y,w,h, T.labelRad);
+  c.fillStyle='#ffd400'; c.strokeStyle='#333'; c.lineWidth=1*DPR();
+  c.fill(); c.stroke();
+  c.fillStyle='#111'; c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(text, center.x, center.y);
+  c.fillStyle='#ffe600'; // restore
+  c.strokeStyle='#ffe600';
+}
+function roundRect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+/* ---- Hit test (pantalla) ---- */
+function d2(p,q){ const dx=p.x-q.x, dy=p.y-q.y; return dx*dx+dy*dy; }
+function dSeg2(p,a,b){
+  const ax=b.x-a.x, ay=b.y-a.y, L=ax*ax+ay*ay; if(L===0) return d2(p,a);
+  let t=((p.x-a.x)*ax + (p.y-a.y)*ay)/L; t=Math.max(0,Math.min(1,t));
+  const q={x:a.x+t*ax, y:a.y+t*ay}; return d2(p,q);
+}
+function hitAt(p){ // p en pantalla
+  const T=th();
+  for(let i=shapes.length-1;i>=0;i--){
+    const s=shapes[i];
+    if(s.type==='dim'){
+      const a=n2s(s.a), b=n2s(s.b);
+      if(d2(p,a)<=T.hitPt2) return {i, part:'a'};
+      if(d2(p,b)<=T.hitPt2) return {i, part:'b'};
+      if(dSeg2(p,a,b)<=T.hitSeg2) return {i, part:'line'};
+    }else if(s.type==='text'){
+      const q=n2s(s.pos);
+      const w=120*DPR(), h=40*DPR();
+      if(Math.abs(p.x-q.x)<w/2 && Math.abs(p.y-q.y)<h/2) return {i, part:'text'};
+    }
   }
-  const T = { pt:24, seg:28, labelW:160, labelH:48, handleR:12, line:4 }; // en px CSS
-  function TT(){ // thresholds en px Canvas
-    return {
-      pt: pxToCanvas(T.pt),
-      seg: pxToCanvas(T.seg),
-      labelW: pxToCanvas(T.labelW),
-      labelH: pxToCanvas(T.labelH),
-      handleR: pxToCanvas(T.handleR),
-      line: Math.max(6, pxToCanvas(T.line)),
-      arrow: pxToCanvas(12),
-      labelPad: pxToCanvas(8),
-      labelRad: pxToCanvas(8),
-      labelStroke: pxToCanvas(2),
-      handleStroke: pxToCanvas(2),
-      font: pxToCanvas(fontPx)
-    };
-  }
-  
-  function setLegend(){
-    const map={
-      dim:'↔ Crear: arrastra. Mover: toca línea/etiqueta y arrastra. Ajustar: arrastra puntas. Editar: doble toque.',
-      text:'Toca para colocar texto. Mover arrastrando. Editar: doble toque.',
-      delete:'Toca para borrar.',
-      clear:'Limpia todas las anotaciones.'
-    };
-    (legendEl||{}).textContent = map[tool]||'';
-  }
-  function setTool(t){
-    tool=t;
-    document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
-    setLegend();
-  }
-  document.querySelectorAll('.tool').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      const t=b.dataset.tool;
-      if(t==='clear'){ shapes=[]; markDirty(); return; }
-      setTool(t);
-    });
-  });
+  return null;
+}
+
+/* ---- Interacción ---- */
+function initAnnotator(){
+  shapes=[]; active=null; drag=null; dirty=true; if(!rafId) rafId=requestAnimationFrame(loop);
   setTool('dim');
-  
-  function cx(){ return paint.getContext('2d'); }
-  function toCanvasPos(e){
-    const r = paint.getBoundingClientRect();
-    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? e.changedTouches?.[0]?.clientX) - r.left;
-    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? e.changedTouches?.[0]?.clientY) - r.top;
-    const sx = paint.width / r.width, sy = paint.height / r.height;
-    return { x: x*sx, y: y*sy };
-  }
-  
-  /* ---- dibujo (sólo cuando dirty) ---- */
-  function draw(){
-    const ctx=cx(); const th=TT();
-    ctx.clearRect(0,0,paint.width,paint.height);
-    ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.lineWidth=th.line;
-    ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
-    ctx.font=`${th.font}px system-ui, -apple-system, Segoe UI, Roboto`;
+
+  let lastTap=0;
+
+  paint.addEventListener('pointerdown', e=>{
+    paint.setPointerCapture?.(e.pointerId);
+    const pS = toScreen(e);
+    const pN = s2n(pS);
+    const hit = hitAt(pS);
+
+    // doble toque para editar
+    const now=Date.now();
+    if(now-lastTap<300 && hit){
+      const s=shapes[hit.i];
+      const val=prompt('Valor/etiqueta:', s.label||'');
+      if(val!=null){ s.label=val; markDirty(); }
+      lastTap=0; e.preventDefault(); return;
+    }
+    lastTap=now;
+
+    if(tool==='delete'){ if(hit){ shapes.splice(hit.i,1); markDirty(); } return; }
+    if(tool==='text'){ shapes.push({type:'text', pos:pN, label:'Texto'}); markDirty(); return; }
+
+    // tool === 'dim'
+    if(hit){
+      drag={i:hit.i, mode:hit.part, startS:pS};
+    }else{
+      // Crear línea: recta con snap
+      const id = (Date.now()+Math.random()).toString(36);
+      shapes.push({type:'dim', a:pN, b:pN, label:''});
+      drag={i:shapes.length-1, mode:'creating', startS:pS};
+    }
+    e.preventDefault();
+  }, {passive:false});
+
+  paint.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const pS = toScreen(e);
+    const s = shapes[drag.i]; if(!s) { drag=null; return; }
+
+    if(s.type==='dim'){
+      if(drag.mode==='creating'){
+        const aS=n2s(s.a), snapped = snapLine(aS, pS);
+        s.b = s2n(snapped);
+      }else if(drag.mode==='a'){
+        const bS=n2s(s.b), snapped = snapLine(pS, bS); // snap a recta respecto a B
+        s.a = s2n(snapped);
+      }else if(drag.mode==='b'){
+        const aS=n2s(s.a), snapped = snapLine(aS, pS);
+        s.b = s2n(snapped);
+      }else if(drag.mode==='line'){
+        const dx = (pS.x - drag.startS.x), dy = (pS.y - drag.startS.y);
+        const aS=n2s(s.a), bS=n2s(s.b);
+        s.a = s2n({x:aS.x+dx, y:aS.y+dy});
+        s.b = s2n({x:bS.x+dx, y:bS.y+dy});
+        drag.startS = pS;
+      }
+    }else if(s.type==='text'){
+      const qS=n2s(s.pos);
+      const dx=pS.x - drag.startS.x, dy=pS.y - drag.startS.y;
+      s.pos = s2n({x:qS.x+dx, y:qS.y+dy});
+      drag.startS = pS;
+    }
+    markDirty();
+    e.preventDefault();
+  }, {passive:false});
+
+  paint.addEventListener('pointerup', ()=>{ drag=null; });
+
+  // Doble click (desktop)
+  paint.addEventListener('dblclick', e=>{
+    const hit=hitAt(toScreen(e)); if(!hit) return;
+    const s=shapes[hit.i];
+    const val=prompt('Valor/etiqueta:', s.label||'');
+    if(val!=null){ s.label=val; markDirty(); }
+  });
+}
+
+function toScreen(e){
+  const r = paint.getBoundingClientRect();
+  const dpr = DPR();
+  const x = (e.clientX ?? e.touches?.[0]?.clientX ?? e.changedTouches?.[0]?.clientX) - r.left;
+  const y = (e.clientY ?? e.touches?.[0]?.clientY ?? e.changedTouches?.[0]?.clientY) - r.top;
+  return { x: x*dpr, y: y*dpr };
+}
+
+/* ========= Guardar (exporta en tamaño real) ========= */
+btnRetake.addEventListener('click', async ()=>{
+  editorArea.style.display='none'; cameraBar.style.display='flex';
+  await startCamera();
+});
+btnSave.addEventListener('click', ()=>{
+  if(!nombre.value.trim()){ alert('Pon un nombre a la foto.'); return; }
+  const {w,h}=imgSize();
+  const out=document.createElement('canvas'); out.width=w; out.height=h;
+  const c=out.getContext('2d');
+  const img=new Image(); img.onload=()=>{
+    c.drawImage(img,0,0,w,h);
+    // dibuja anotaciones escaladas al tamaño real
+    c.lineCap='round'; c.lineJoin='round';
+    c.strokeStyle='#ffe600'; c.fillStyle='#ffe600';
+    c.lineWidth = Math.max(2, Math.round(Math.min(w,h)*0.003)); // grosor relativo
+
+    const fontSize = Math.max(14, Math.round(Math.min(w,h)*0.02));
+    c.font = `${fontSize}px system-ui, -apple-system, Segoe UI, Roboto`;
+
     shapes.forEach(s=>{
       if(s.type==='dim'){
-        const {a,b}=s;
-        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-        drawArrow(ctx,a,b, th); drawArrow(ctx,b,a, th);
-        if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label, th);
-        drawHandle(ctx,a, th); drawHandle(ctx,b, th); // SIEMPRE visibles (sin hover)
-      } else if(s.type==='text'){
-        drawLabel(ctx,s.pos, s.label || 'Texto', th);
+        const a={x:s.a.x*w, y:s.a.y*h}, b={x:s.b.x*w, y:s.b.y*h};
+        c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke();
+        // flechas
+        arrow(c,a,b, Math.max(8, fontSize*0.6));
+        arrow(c,b,a, Math.max(8, fontSize*0.6));
+        if(s.label && s.label.trim()){
+          const m={x:(a.x+b.x)/2, y:(a.y+b.y)/2};
+          drawLabelExport(c, m, s.label, fontSize);
+        }
+      }else if(s.type==='text'){
+        const p={x:s.pos.x*w, y:s.pos.y*h};
+        drawLabelExport(c, p, s.label||'Texto', fontSize);
       }
     });
-  }
-  function drawArrow(ctx, p1, p2, th){
-    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), size=th.arrow;
-    ctx.beginPath();
-    ctx.moveTo(p1.x,p1.y);
-    ctx.lineTo(p1.x+size*Math.cos(ang+Math.PI/6), p1.y+size*Math.sin(ang+Math.PI/6));
-    ctx.moveTo(p1.x,p1.y);
-    ctx.lineTo(p1.x+size*Math.cos(ang-Math.PI/6), p1.y+size*Math.sin(ang-Math.PI/6));
-    ctx.stroke();
-  }
-  function drawLabel(ctx, pos, text, th){
-    const pad=th.labelPad, t=text||'';
-    const w=ctx.measureText(t).width+pad*2, h=pxToCanvas(34);
-    const x=pos.x-w/2, y=pos.y-h/2;
-    ctx.fillStyle='#ffd400'; ctx.strokeStyle='#333'; ctx.lineWidth=th.labelStroke;
-    roundRect(ctx,x,y,w,h, th.labelRad); ctx.fill(); ctx.stroke();
-    ctx.fillStyle='#111'; ctx.textBaseline='middle'; ctx.textAlign='center';
-    ctx.fillText(t, x+w/2, y+h/2);
-    ctx.fillStyle='#ffe600'; // restaurar
-    ctx.strokeStyle='#ffe600';
-  }
-  function drawHandle(ctx, p, th){
-    ctx.save();
-    ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=th.handleStroke;
-    ctx.beginPath(); ctx.arc(p.x,p.y,th.handleR,0,Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-  function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-  function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
-  
-  /* ---- hit test optimizado ---- */
-  function dist2(p,q){ const dx=p.x-q.x, dy=p.y-q.y; return dx*dx+dy*dy; }
-  function distSeg2(p,a,b){
-    const ax=b.x-a.x, ay=b.y-a.y;
-    const len2=ax*ax+ay*ay; if(len2===0) return dist2(p,a);
-    let t=((p.x-a.x)*ax + (p.y-a.y)*ay)/len2; t=Math.max(0,Math.min(1,t));
-    const q={x:a.x+t*ax, y:a.y+t*ay};
-    return dist2(p,q);
-  }
-  function hitTest(p){
-    const th=TT(); const pt2=th.pt*th.pt, seg2=th.seg*th.seg;
-    for(let i=shapes.length-1;i>=0;i--){
-      const s=shapes[i];
-      if(s.type==='dim'){
-        if(dist2(p,s.a)<pt2) return {id:s.id, part:'a'};
-        if(dist2(p,s.b)<pt2) return {id:s.id, part:'b'};
-        if(distSeg2(p,s.a,s.b)<seg2) return {id:s.id, part:'line'};
-        if(s.label && s.label.trim()){
-          const m = mid(s.a,s.b), hw=th.labelW/2, hh=th.labelH/2;
-          if(p.x>=m.x-hw && p.x<=m.x+hw && p.y>=m.y-hh && p.y<=m.y+hh) return {id:s.id, part:'line'};
-        }
-      }else if(s.type==='text'){
-        const hw=th.labelW/2, hh=th.labelH/2;
-        if(Math.abs(p.x-s.pos.x)<hw && Math.abs(p.y-s.pos.y)<hh) return {id:s.id, part:'text'};
-      }
-    }
-    return null;
-  }
-  
-  /* ---- interacción ---- */
-  let dragInfo=null; // {id, mode, start:{x,y}}
-  function initAnnotator(){
-    shapes=[]; activeId=null; dragMode=null; dragStart=null; dragInfo=null;
-    markDirty(); setTool('dim');
-  
-    let lastTap=0;
-  
-    const editAt=(p)=>{
-      const hit=hitTest(p); if(!hit) return;
-      const s=shapes.find(x=>x.id===hit.id); if(!s) return;
-      const v=prompt('Valor/etiqueta:', s.label||''); if(v!=null){ s.label=v; markDirty(); }
-    };
-  
-    const onDown=(e)=>{
-      if(gesture.active) return;
-      paint.setPointerCapture?.(e.pointerId);
-      const p=toCanvasPos(e);
-      const hit=hitTest(p);
-  
-      // doble-tap
-      const now=Date.now();
-      if(now-lastTap<300 && hit){ editAt(p); lastTap=0; e.preventDefault(); return; }
-      lastTap=now;
-  
-      if(tool==='delete'){ if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); markDirty(); } return; }
-      if(tool==='text'){ shapes.push({id:(Date.now()+Math.random()).toString(36), type:'text', pos:p, label:'Texto'}); markDirty(); return; }
-  
-      if(hit){
-        dragInfo={ id:hit.id, mode:hit.part, start:p };
-      }else{
-        // crear nueva cota
-        const id=(Date.now()+Math.random()).toString(36);
-        shapes.push({id, type:'dim', a:p, b:p, label:''});
-        dragInfo={ id, mode:'creating', start:p };
-      }
-      e.preventDefault();
-    };
-  
-    const onMove=(e)=>{
-      if(!dragInfo || gesture.active) return;
-      const p=toCanvasPos(e);
-      const s=shapes.find(x=>x.id===dragInfo.id); if(!s){ dragInfo=null; return; }
-  
-      if(s.type==='dim'){
-        if(dragInfo.mode==='creating'){ s.b=p; }
-        else if(dragInfo.mode==='a'){ s.a=p; }
-        else if(dragInfo.mode==='b'){ s.b=p; }
-        else if(dragInfo.mode==='line'){
-          const dx=p.x-dragInfo.start.x, dy=p.y-dragInfo.start.y;
-          s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy;
-          dragInfo.start=p;
-        }
-      }else if(s.type==='text'){
-        const dx=p.x-dragInfo.start.x, dy=p.y-dragInfo.start.y;
-        s.pos.x+=dx; s.pos.y+=dy; dragInfo.start=p;
-      }
-      markDirty(); e.preventDefault();
-    };
-  
-    const onUp=()=>{ dragInfo=null; };
-  
-    paint.addEventListener('pointerdown', onDown, {passive:false});
-    paint.addEventListener('pointermove', onMove,  {passive:false});
-    paint.addEventListener('pointerup',   onUp,    {passive:false});
-    paint.addEventListener('pointerleave',onUp,    {passive:false});
-  
-    // Doble click (desktop)
-    paint.addEventListener('dblclick', (e)=>{ editAt(toCanvasPos(e)); });
-  
-    // Iniciar loop de render una sola vez por init
-    (function loop(){ if(dirty){ draw(); dirty=false; } requestAnimationFrame(loop); })();
-  }
-  
-  /* ====== Pinch-to-zoom (dos dedos) ====== */
-  const gesture = { active:false, scale:1, tx:0, ty:0, startDist:0, startCx:0, startCy:0, startTx:0, startTy:0, startScale:1 };
-  const pointers = new Map();
-  function setTransform(){ zoomLayer.style.willChange='transform'; zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
-  zoomLayer.addEventListener('pointerdown', (e)=>{ zoomLayer.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(pointers.size===2){ const [p1,p2]=[...pointers.values()]; gesture.active=true;
-      gesture.startDist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
-      gesture.startCx=(p1.x+p2.x)/2; gesture.startCy=(p1.y+p2.y)/2;
-      gesture.startTx=gesture.tx; gesture.startTy=gesture.ty; gesture.startScale=gesture.scale; }
-  });
-  zoomLayer.addEventListener('pointermove', (e)=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(gesture.active && pointers.size===2){ const [p1,p2]=[...pointers.values()];
-      const dist=Math.hypot(p2.x-p1.x,p2.y-p1.y), cx=(p1.x+p2.x)/2, cy=(p1.y+p2.y)/2;
-      const ds=dist/gesture.startDist;
-      gesture.scale=Math.min(3,Math.max(1,gesture.startScale*ds));
-      gesture.tx=gesture.startTx+(cx-gesture.startCx); gesture.ty=gesture.startTy+(cy-gesture.startCy);
-      setTransform(); }
-  },{passive:false});
-  function endPointer(e){ pointers.delete(e.pointerId); if(pointers.size<2){ gesture.active=false; } }
-  zoomLayer.addEventListener('pointerup', endPointer);
-  zoomLayer.addEventListener('pointercancel', endPointer);
-  zoomLayer.addEventListener('pointerleave', endPointer);
-  
-  /* ====== Repetir / Guardar ====== */
-  btnRetake.addEventListener('click', async ()=>{
-    editorArea.style.display='none'; cameraBar.style.display='flex';
-    gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform();
-    await startCamera();
-  });
-  btnSave.addEventListener('click', ()=>{
-    if(!nombre.value.trim()){ alert('Pon un nombre a la foto.'); return; }
-    const w=photo.naturalWidth, h=photo.naturalHeight;
-    const out=document.createElement('canvas'); out.width=w; out.height=h;
-    const ctx=out.getContext('2d');
-    const img=new Image(); img.onload=()=>{
-      ctx.drawImage(img,0,0,w,h);
-      ctx.drawImage(paint,0,0);
-      const png=out.toDataURL('image/png');
-      dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
-    }; img.src=photo.src;
-  });
-  
-  /* Limpieza */
-  window.addEventListener('pagehide', stopStream);
-  window.addEventListener('beforeunload', stopStream);
-  
-  /* Autoinicio */
-  document.addEventListener('DOMContentLoaded', ()=>{ startCamera().catch(()=>{}); });
-  </script>
-  
 
-  
+    const png=out.toDataURL('image/png');
+    dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
+  };
+  img.src=photo.src;
+});
+
+function drawLabelExport(c, center, text, fontSize){
+  const pad = Math.round(fontSize*0.5);
+  const h   = Math.round(fontSize*1.6);
+  const w   = Math.max(Math.round(fontSize*4), Math.round(c.measureText(text).width + pad*2));
+  const x=center.x - w/2, y=center.y - h/2;
+  roundRect(c, x,y,w,h, Math.round(fontSize*0.35));
+  c.fillStyle='#ffd400'; c.strokeStyle='#333'; c.lineWidth=2;
+  c.fill(); c.stroke();
+  c.fillStyle='#111'; c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(text, center.x, center.y);
+  c.fillStyle='#ffe600'; c.strokeStyle='#ffe600';
+}
+
+/* ========= Limpieza / Auto ========= */
+window.addEventListener('beforeunload', ()=>stopStream());
+document.addEventListener('DOMContentLoaded', ()=>{ resizePaintToDisplay(); startCamera().catch(()=>{}); });
+</script>
 {% endblock %}

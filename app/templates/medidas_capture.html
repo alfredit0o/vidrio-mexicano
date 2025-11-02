@@ -109,9 +109,7 @@
       const L=d.label.toLowerCase();
       const isBack=L.includes('back')||L.includes('rear')||L.includes('environment');
       const isFront=L.includes('front')||L.includes('user');
-      if(isBack) envIds.push(d.deviceId);
-      else if(isFront) userIds.push(d.deviceId);
-      else envIds.push(d.deviceId);
+      if(isBack) envIds.push(d.deviceId); else if(isFront) userIds.push(d.deviceId); else envIds.push(d.deviceId);
     }
     currentList=(usingBack&&envIds.length)?envIds:(userIds.length?userIds:devices.map(d=>d.deviceId));
     idx=0;
@@ -129,17 +127,16 @@
     }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
   }
   async function startCamera(){ await enumerateCameras(); const id=currentList[idx]||devices[0]?.deviceId||null; await startCameraById(id); }
-  
   btnStart.addEventListener('click', startCamera);
   btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerateCameras(); idx=(idx+1)%currentList.length; await startCameraById(currentList[idx]); });
   
-  /* ====== Captura → Editor (esperar onload) ====== */
+  /* ====== Captura → Editor (espera onload) ====== */
   btnShot.addEventListener('click', async ()=>{
     if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
     const w=video.videoWidth, h=video.videoHeight;
-    const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
-    tmp.getContext('2d').drawImage(video,0,0,w,h);
-    const png=tmp.toDataURL('image/png');
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(video,0,0,w,h);
+    const png=c.toDataURL('image/png');
   
     photo.onload = ()=>{
       paint.width = photo.naturalWidth;
@@ -150,7 +147,7 @@
       cameraBar.style.display='none';
       editorArea.style.display='block';
       btnSave.disabled=false;
-      statusEl.textContent='↔ Arrastra para crear. Toca cerca del centro para mover. Doble toque / mantener para editar.';
+      statusEl.textContent='↔ Arrastra para crear. Toca línea/etiqueta para mover. Doble toque para editar.';
       initAnnotator();
     };
     photo.src=png;
@@ -159,29 +156,40 @@
   });
   
   /* ====== Editor (Flecha + Texto) ====== */
-  let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null, hoverId=null;
+  let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null;
+  let dirty = true;           // bandera de dibujo
+  let fontPx = 20;            // cacheado (se recalcula al dibujar)
+  function markDirty(){ dirty = true; }
   
-  /* --- utilidades tamaño dependiente de pantalla --- */
+  /* --- utilidades dependientes de pantalla --- */
   function pxToCanvas(px){
     const r = paint.getBoundingClientRect();
-    const sx = paint.width / r.width; // cuántos "canvas px" hay en 1 px CSS
+    const sx = paint.width / r.width;
     return px * sx;
   }
-  function thresholds(){
-    // Umbrales amigables en pantalla chica
-    const pt = pxToCanvas(28);     // radio “agarre” de extremos
-    const seg = pxToCanvas(28);    // distancia a la línea para mover toda la cota
-    const labelW = pxToCanvas(140), labelH = pxToCanvas(44); // caja de texto
-    const handleR = pxToCanvas(11);
-    const lineWidth = Math.max(6, pxToCanvas(3)); // visible en alta densidad
-    return { pt, seg, labelW, labelH, handleR, lineWidth };
+  const T = { pt:24, seg:28, labelW:160, labelH:48, handleR:12, line:4 }; // en px CSS
+  function TT(){ // thresholds en px Canvas
+    return {
+      pt: pxToCanvas(T.pt),
+      seg: pxToCanvas(T.seg),
+      labelW: pxToCanvas(T.labelW),
+      labelH: pxToCanvas(T.labelH),
+      handleR: pxToCanvas(T.handleR),
+      line: Math.max(6, pxToCanvas(T.line)),
+      arrow: pxToCanvas(12),
+      labelPad: pxToCanvas(8),
+      labelRad: pxToCanvas(8),
+      labelStroke: pxToCanvas(2),
+      handleStroke: pxToCanvas(2),
+      font: pxToCanvas(fontPx)
+    };
   }
   
   function setLegend(){
     const map={
-      dim:'↔ Arrastra para crear la cota. Toca cerca del centro o la etiqueta para moverla. Puntas para ajustar. Doble toque / mantener para editar.',
-      text:'Toca para colocar un rótulo. Doble toque / mantener para editar.',
-      delete:'Toca un elemento para borrarlo.',
+      dim:'↔ Crear: arrastra. Mover: toca línea/etiqueta y arrastra. Ajustar: arrastra puntas. Editar: doble toque.',
+      text:'Toca para colocar texto. Mover arrastrando. Editar: doble toque.',
+      delete:'Toca para borrar.',
       clear:'Limpia todas las anotaciones.'
     };
     (legendEl||{}).textContent = map[tool]||'';
@@ -194,7 +202,7 @@
   document.querySelectorAll('.tool').forEach(b=>{
     b.addEventListener('click', ()=>{
       const t=b.dataset.tool;
-      if(t==='clear'){ shapes=[]; draw(); return; }
+      if(t==='clear'){ shapes=[]; markDirty(); return; }
       setTool(t);
     });
   });
@@ -209,38 +217,28 @@
     return { x: x*sx, y: y*sy };
   }
   
-  /* ---- dibujo ---- */
+  /* ---- dibujo (sólo cuando dirty) ---- */
   function draw(){
-    const {handleR, lineWidth} = thresholds();
-    const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
+    const ctx=cx(); const th=TT();
+    ctx.clearRect(0,0,paint.width,paint.height);
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.lineWidth=th.line;
+    ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
+    ctx.font=`${th.font}px system-ui, -apple-system, Segoe UI, Roboto`;
     shapes.forEach(s=>{
-      ctx.save();
-      ctx.lineWidth=lineWidth; ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
-      ctx.font=`${pxToCanvas(20)}px system-ui, -apple-system, Segoe UI, Roboto`;
-  
       if(s.type==='dim'){
         const {a,b}=s;
         ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-        drawArrow(ctx,a,b); drawArrow(ctx,b,a);
-        if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label);
-        if(s.id===hoverId || s.id===activeId){ drawHandle(ctx,a, handleR); drawHandle(ctx,b, handleR); }
+        drawArrow(ctx,a,b, th); drawArrow(ctx,b,a, th);
+        if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label, th);
+        drawHandle(ctx,a, th); drawHandle(ctx,b, th); // SIEMPRE visibles (sin hover)
       } else if(s.type==='text'){
-        drawLabel(ctx,s.pos, s.label || 'Texto');
+        drawLabel(ctx,s.pos, s.label || 'Texto', th);
       }
-      ctx.restore();
     });
-    if(hoverId!=null){
-      const s=shapes.find(x=>x.id===hoverId);
-      if(s && s.type==='dim'){
-        const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=lineWidth;
-        ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke();
-        ctx.restore();
-      }
-    }
   }
-  function drawArrow(ctx, p1, p2){
-    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), size=pxToCanvas(12);
+  function drawArrow(ctx, p1, p2, th){
+    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), size=th.arrow;
     ctx.beginPath();
     ctx.moveTo(p1.x,p1.y);
     ctx.lineTo(p1.x+size*Math.cos(ang+Math.PI/6), p1.y+size*Math.sin(ang+Math.PI/6));
@@ -248,154 +246,133 @@
     ctx.lineTo(p1.x+size*Math.cos(ang-Math.PI/6), p1.y+size*Math.sin(ang-Math.PI/6));
     ctx.stroke();
   }
-  function drawLabel(ctx, pos, text){
-    const pad=pxToCanvas(8), t=text||'';
+  function drawLabel(ctx, pos, text, th){
+    const pad=th.labelPad, t=text||'';
     const w=ctx.measureText(t).width+pad*2, h=pxToCanvas(34);
     const x=pos.x-w/2, y=pos.y-h/2;
-    ctx.fillStyle='#ffd400';
-    ctx.strokeStyle='#333'; ctx.lineWidth=pxToCanvas(2);
-    roundRect(ctx,x,y,w,h,pxToCanvas(8)); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#ffd400'; ctx.strokeStyle='#333'; ctx.lineWidth=th.labelStroke;
+    roundRect(ctx,x,y,w,h, th.labelRad); ctx.fill(); ctx.stroke();
     ctx.fillStyle='#111'; ctx.textBaseline='middle'; ctx.textAlign='center';
     ctx.fillText(t, x+w/2, y+h/2);
+    ctx.fillStyle='#ffe600'; // restaurar
+    ctx.strokeStyle='#ffe600';
   }
-  function drawHandle(ctx, p, r){
+  function drawHandle(ctx, p, th){
     ctx.save();
-    ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=pxToCanvas(2);
-    ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=th.handleStroke;
+    ctx.beginPath(); ctx.arc(p.x,p.y,th.handleR,0,Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
   function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
   function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
-  function dist(p,q){ return Math.hypot(p.x-q.x,p.y-q.y); }
-  function distToSegment(p,a,b){
-    const l2=(b.x-a.x)**2+(b.y-a.y)**2; if(l2===0) return Math.hypot(p.x-a.x,p.y-a.y);
-    let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));
-    const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)}; return Math.hypot(p.x-proj.x,p.y-proj.y);
-  }
   
-  /* ---- hit test con extremos / línea / etiqueta ---- */
+  /* ---- hit test optimizado ---- */
+  function dist2(p,q){ const dx=p.x-q.x, dy=p.y-q.y; return dx*dx+dy*dy; }
+  function distSeg2(p,a,b){
+    const ax=b.x-a.x, ay=b.y-a.y;
+    const len2=ax*ax+ay*ay; if(len2===0) return dist2(p,a);
+    let t=((p.x-a.x)*ax + (p.y-a.y)*ay)/len2; t=Math.max(0,Math.min(1,t));
+    const q={x:a.x+t*ax, y:a.y+t*ay};
+    return dist2(p,q);
+  }
   function hitTest(p){
-    const {pt, seg, labelW, labelH} = thresholds();
+    const th=TT(); const pt2=th.pt*th.pt, seg2=th.seg*th.seg;
     for(let i=shapes.length-1;i>=0;i--){
       const s=shapes[i];
       if(s.type==='dim'){
-        if(dist(p,s.a)<pt) return {id:s.id, part:'a'};
-        if(dist(p,s.b)<pt) return {id:s.id, part:'b'};
-        // mover por línea (tolerancia grande)
-        if(distToSegment(p,s.a,s.b)<seg) return {id:s.id, part:'line'};
-        // mover por etiqueta (área generosa)
+        if(dist2(p,s.a)<pt2) return {id:s.id, part:'a'};
+        if(dist2(p,s.b)<pt2) return {id:s.id, part:'b'};
+        if(distSeg2(p,s.a,s.b)<seg2) return {id:s.id, part:'line'};
         if(s.label && s.label.trim()){
-          const m = mid(s.a,s.b), hw=labelW/2, hh=labelH/2;
+          const m = mid(s.a,s.b), hw=th.labelW/2, hh=th.labelH/2;
           if(p.x>=m.x-hw && p.x<=m.x+hw && p.y>=m.y-hh && p.y<=m.y+hh) return {id:s.id, part:'line'};
         }
       }else if(s.type==='text'){
-        const hw=labelW/2, hh=labelH/2;
+        const hw=th.labelW/2, hh=th.labelH/2;
         if(Math.abs(p.x-s.pos.x)<hw && Math.abs(p.y-s.pos.y)<hh) return {id:s.id, part:'text'};
       }
     }
     return null;
   }
   
-  function promptLabel(defaultText){
-    const v=prompt('Valor/etiqueta (ej: 386 mm):', defaultText||''); return v==null?null:v;
-  }
-  function addShape(s){ s.id=(Date.now()+Math.random()).toString(36); shapes.push(s); draw(); }
-  
   /* ---- interacción ---- */
+  let dragInfo=null; // {id, mode, start:{x,y}}
   function initAnnotator(){
-    shapes=[]; activeId=null; dragMode=null; dragStart=null; hoverId=null; draw();
-    setTool('dim');
+    shapes=[]; activeId=null; dragMode=null; dragStart=null; dragInfo=null;
+    markDirty(); setTool('dim');
   
-    let lastTap=0, longPressTimer=null, dragging=false;
+    let lastTap=0;
   
-    const editUnderPointer=(p)=>{
+    const editAt=(p)=>{
       const hit=hitTest(p); if(!hit) return;
       const s=shapes.find(x=>x.id===hit.id); if(!s) return;
-      if(s.type==='dim' || s.type==='text'){
-        const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
-      }
+      const v=prompt('Valor/etiqueta:', s.label||''); if(v!=null){ s.label=v; markDirty(); }
     };
   
     const onDown=(e)=>{
       if(gesture.active) return;
       paint.setPointerCapture?.(e.pointerId);
       const p=toCanvasPos(e);
-      const hit=hitTest(p); hoverId = hit ? hit.id : null;
+      const hit=hitTest(p);
   
-      // doble toque manual (iOS)
+      // doble-tap
       const now=Date.now();
-      if(now-lastTap<300 && hit){ editUnderPointer(p); lastTap=0; e.preventDefault(); return; }
+      if(now-lastTap<300 && hit){ editAt(p); lastTap=0; e.preventDefault(); return; }
       lastTap=now;
   
-      // long press para editar (si no se arrastra)
-      clearTimeout(longPressTimer);
-      longPressTimer=setTimeout(()=>{ if(!dragging) editUnderPointer(p); }, 500);
-  
-      if(tool==='delete'){ if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); activeId=null; draw(); } return; }
-      if(tool==='text'){ addShape({type:'text', pos:p, label:'Texto'}); draw(); return; }
-  
-      dragging=false;
+      if(tool==='delete'){ if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); markDirty(); } return; }
+      if(tool==='text'){ shapes.push({id:(Date.now()+Math.random()).toString(36), type:'text', pos:p, label:'Texto'}); markDirty(); return; }
   
       if(hit){
-        activeId = hit.id;
-        dragStart = p;
-        dragMode = hit.part; // 'a' | 'b' | 'line'
+        dragInfo={ id:hit.id, mode:hit.part, start:p };
       }else{
-        const s={type:'dim', a:p, b:p, label:''};
-        addShape(s);
-        activeId = s.id;
-        dragStart = p;
-        dragMode = 'creating'; // solo estira B
+        // crear nueva cota
+        const id=(Date.now()+Math.random()).toString(36);
+        shapes.push({id, type:'dim', a:p, b:p, label:''});
+        dragInfo={ id, mode:'creating', start:p };
       }
       e.preventDefault();
     };
   
     const onMove=(e)=>{
-      if(gesture.active) return;
+      if(!dragInfo || gesture.active) return;
       const p=toCanvasPos(e);
+      const s=shapes.find(x=>x.id===dragInfo.id); if(!s){ dragInfo=null; return; }
   
-      // si hay desplazamiento, cancelamos long-press
-      clearTimeout(longPressTimer);
-  
-      if(activeId){
-        const s=shapes.find(x=>x.id===activeId); if(!s) return;
-        dragging=true;
-        if(s.type==='dim'){
-          if(dragMode==='creating'){ s.b = p; }
-          else if(dragMode==='a'){ s.a = p; }
-          else if(dragMode==='b'){ s.b = p; }
-          else { // 'line' -> mover todo por delta
-            const dx=p.x-dragStart.x, dy=p.y-dragStart.y;
-            s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; dragStart=p;
-          }
-          draw();
-        }else if(s.type==='text'){
-          // permitir mover textos también
-          const dx=p.x-dragStart.x, dy=p.y-dragStart.y; s.pos.x+=dx; s.pos.y+=dy; dragStart=p; draw();
+      if(s.type==='dim'){
+        if(dragInfo.mode==='creating'){ s.b=p; }
+        else if(dragInfo.mode==='a'){ s.a=p; }
+        else if(dragInfo.mode==='b'){ s.b=p; }
+        else if(dragInfo.mode==='line'){
+          const dx=p.x-dragInfo.start.x, dy=p.y-dragInfo.start.y;
+          s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy;
+          dragInfo.start=p;
         }
-        e.preventDefault();
-        return;
+      }else if(s.type==='text'){
+        const dx=p.x-dragInfo.start.x, dy=p.y-dragInfo.start.y;
+        s.pos.x+=dx; s.pos.y+=dy; dragInfo.start=p;
       }
-  
-      const h=hitTest(p); hoverId = h ? h.id : null; draw();
-      e.preventDefault();
+      markDirty(); e.preventDefault();
     };
   
-    const onUp=(e)=>{ clearTimeout(longPressTimer); activeId=null; dragMode=null; dragStart=null; dragging=false; e.preventDefault(); };
+    const onUp=()=>{ dragInfo=null; };
   
     paint.addEventListener('pointerdown', onDown, {passive:false});
     paint.addEventListener('pointermove', onMove,  {passive:false});
     paint.addEventListener('pointerup',   onUp,    {passive:false});
     paint.addEventListener('pointerleave',onUp,    {passive:false});
   
-    // Doble click: escritorio
-    paint.addEventListener('dblclick', (e)=>{ const p=toCanvasPos(e); editUnderPointer(p); });
+    // Doble click (desktop)
+    paint.addEventListener('dblclick', (e)=>{ editAt(toCanvasPos(e)); });
+  
+    // Iniciar loop de render una sola vez por init
+    (function loop(){ if(dirty){ draw(); dirty=false; } requestAnimationFrame(loop); })();
   }
   
   /* ====== Pinch-to-zoom (dos dedos) ====== */
   const gesture = { active:false, scale:1, tx:0, ty:0, startDist:0, startCx:0, startCy:0, startTx:0, startTy:0, startScale:1 };
   const pointers = new Map();
-  function setTransform(){ zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
+  function setTransform(){ zoomLayer.style.willChange='transform'; zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
   zoomLayer.addEventListener('pointerdown', (e)=>{ zoomLayer.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
     if(pointers.size===2){ const [p1,p2]=[...pointers.values()]; gesture.active=true;
       gesture.startDist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
@@ -427,8 +404,8 @@
     const out=document.createElement('canvas'); out.width=w; out.height=h;
     const ctx=out.getContext('2d');
     const img=new Image(); img.onload=()=>{
-      ctx.drawImage(img,0,0,w,h);      // fondo
-      ctx.drawImage(paint,0,0);        // overlay de anotaciones
+      ctx.drawImage(img,0,0,w,h);
+      ctx.drawImage(paint,0,0);
       const png=out.toDataURL('image/png');
       dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
     }; img.src=photo.src;
@@ -441,5 +418,7 @@
   /* Autoinicio */
   document.addEventListener('DOMContentLoaded', ()=>{ startCamera().catch(()=>{}); });
   </script>
+  
+
   
 {% endblock %}

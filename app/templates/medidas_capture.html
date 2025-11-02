@@ -89,319 +89,357 @@
 </div>
 
 <script>
-/* ====== Cámara ====== */
-let stream=null, wakeLock=null, devices=[], envIds=[], userIds=[], currentList=[], idx=0, usingBack=true;
-const $=id=>document.getElementById(id);
-const video=$('video'), photo=$('photo'), paint=$('paint'), zoomLayer=$('zoomLayer');
-const btnStart=$('btnStart'), btnShot=$('btnShot'), btnFlip=$('btnFlip');
-const btnRetake=$('btnRetake'), btnSave=$('btnSave');
-const statusEl=$('status'), legendEl=$('legend');
-const nombre=$('nombre'), campoNombre=$('campoNombre'), dataurl=$('dataurl'), form=$('form');
-const cameraBar=$('cameraBar'), editorArea=$('editorArea');
-
-function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
-async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null}); } }catch(_){} }
-async function enumerateCameras(){
-  const list=await navigator.mediaDevices.enumerateDevices();
-  devices=list.filter(d=>d.kind==='videoinput');
-  envIds=[]; userIds=[];
-  for(const d of devices){
-    const L=d.label.toLowerCase();
-    const isBack=L.includes('back')||L.includes('rear')||L.includes('environment');
-    const isFront=L.includes('front')||L.includes('user');
-    if(isBack) envIds.push(d.deviceId);
-    else if(isFront) userIds.push(d.deviceId);
-    else envIds.push(d.deviceId);
+  /* ====== Cámara (igual que antes) ====== */
+  let stream=null, wakeLock=null, devices=[], envIds=[], userIds=[], currentList=[], idx=0, usingBack=true;
+  const $=id=>document.getElementById(id);
+  const video=$('video'), photo=$('photo'), paint=$('paint'), zoomLayer=$('zoomLayer');
+  const btnStart=$('btnStart'), btnShot=$('btnShot'), btnFlip=$('btnFlip');
+  const btnRetake=$('btnRetake'), btnSave=$('btnSave');
+  const statusEl=$('status'), legendEl=$('legend');
+  const nombre=$('nombre'), campoNombre=$('campoNombre'), dataurl=$('dataurl'), form=$('form');
+  const cameraBar=$('cameraBar'), editorArea=$('editorArea');
+  
+  function stopStream(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+  async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null}); } }catch(_){} }
+  async function enumerateCameras(){
+    const list=await navigator.mediaDevices.enumerateDevices();
+    devices=list.filter(d=>d.kind==='videoinput');
+    envIds=[]; userIds=[];
+    for(const d of devices){
+      const L=d.label.toLowerCase();
+      const isBack=L.includes('back')||L.includes('rear')||L.includes('environment');
+      const isFront=L.includes('front')||L.includes('user');
+      if(isBack) envIds.push(d.deviceId);
+      else if(isFront) userIds.push(d.deviceId);
+      else envIds.push(d.deviceId);
+    }
+    currentList=(usingBack&&envIds.length)?envIds:(userIds.length?userIds:devices.map(d=>d.deviceId));
+    idx=0;
+    btnFlip.disabled = devices.length<2; btnFlip.style.display=devices.length<2?'none':'inline-block';
   }
-  currentList=(usingBack&&envIds.length)?envIds:(userIds.length?userIds:devices.map(d=>d.deviceId));
-  idx=0;
-  btnFlip.disabled = devices.length<2; btnFlip.style.display=devices.length<2?'none':'inline-block';
-}
-async function startCameraById(deviceId){
-  try{
-    if(!navigator.mediaDevices?.getUserMedia){ alert('Requiere HTTPS o localhost'); return; }
-    stopStream();
-    const constraints={ video:{ deviceId:deviceId?{exact:deviceId}:undefined, facingMode: deviceId?undefined:{ideal:usingBack?'environment':'user'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
-    stream=await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject=stream; await video.play(); await requestWakeLock();
-    video.style.display='block'; photo.style.display='none'; paint.style.display='none';
-    btnShot.disabled=false; statusEl.textContent='Enmarca el vidrio y toca el botón.';
-  }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
-}
-async function startCamera(){ await enumerateCameras(); const id=currentList[idx]||devices[0]?.deviceId||null; await startCameraById(id); }
-
-btnStart.addEventListener('click', startCamera);
-btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerateCameras(); idx=(idx+1)%currentList.length; await startCameraById(currentList[idx]); });
-
-/* ====== Captura → Editor (espera a photo.onload) ====== */
-btnShot.addEventListener('click', async ()=>{
-  if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
-  const w=video.videoWidth, h=video.videoHeight;
-  const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
-  tmp.getContext('2d').drawImage(video,0,0,w,h);
-  const png=tmp.toDataURL('image/png');
-
-  photo.onload = ()=>{
-    paint.width = photo.naturalWidth;
-    paint.height= photo.naturalHeight;
-
-    paint.style.display='block';
-    photo.style.display='block';
-    video.style.display='none';
-    cameraBar.style.display='none';
-    editorArea.style.display='block';
-    btnSave.disabled=false;
-
-    statusEl.textContent='Arrastra para medir. Doble toque o mantener para editar.';
-    initAnnotator();
-  };
-  photo.src=png;
-
-  stopStream(); if(wakeLock){ try{ await wakeLock.release(); }catch(_){} }
-});
-
-/* ====== Editor (Flecha + Texto) ====== */
-let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null, hoverId=null;
-
-function setLegend(){
-  const map={
-    dim:'↔ Arrastra para crear la cota. Luego mueve puntas o la línea. Doble toque / mantener para editar.',
-    text:'Toca para colocar un rótulo. Doble toque / mantener para editar.',
-    delete:'Toca un elemento para borrarlo.',
-    clear:'Limpia todas las anotaciones.'
-  };
-  (legendEl||{}).textContent = map[tool]||'';
-}
-function setTool(t){
-  tool=t;
-  document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
-  setLegend();
-}
-document.querySelectorAll('.tool').forEach(b=>{
-  b.addEventListener('click', ()=>{
-    const t=b.dataset.tool;
-    if(t==='clear'){ shapes=[]; draw(); return; }
-    setTool(t);
+  async function startCameraById(deviceId){
+    try{
+      if(!navigator.mediaDevices?.getUserMedia){ alert('Requiere HTTPS o localhost'); return; }
+      stopStream();
+      const constraints={ video:{ deviceId:deviceId?{exact:deviceId}:undefined, facingMode: deviceId?undefined:{ideal:usingBack?'environment':'user'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false };
+      stream=await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject=stream; await video.play(); await requestWakeLock();
+      video.style.display='block'; photo.style.display='none'; paint.style.display='none';
+      btnShot.disabled=false; statusEl.textContent='Enmarca el vidrio y toca el botón.';
+    }catch(err){ console.error(err); alert('No se pudo iniciar la cámara: '+err.message); }
+  }
+  async function startCamera(){ await enumerateCameras(); const id=currentList[idx]||devices[0]?.deviceId||null; await startCameraById(id); }
+  
+  btnStart.addEventListener('click', startCamera);
+  btnFlip.addEventListener('click', async ()=>{ if(!devices.length) await enumerateCameras(); idx=(idx+1)%currentList.length; await startCameraById(currentList[idx]); });
+  
+  /* ====== Captura → Editor (esperar onload) ====== */
+  btnShot.addEventListener('click', async ()=>{
+    if(!video.videoWidth){ alert('La cámara aún no está lista.'); return; }
+    const w=video.videoWidth, h=video.videoHeight;
+    const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+    tmp.getContext('2d').drawImage(video,0,0,w,h);
+    const png=tmp.toDataURL('image/png');
+  
+    photo.onload = ()=>{
+      paint.width = photo.naturalWidth;
+      paint.height= photo.naturalHeight;
+      paint.style.display='block';
+      photo.style.display='block';
+      video.style.display='none';
+      cameraBar.style.display='none';
+      editorArea.style.display='block';
+      btnSave.disabled=false;
+      statusEl.textContent='↔ Arrastra para crear. Toca cerca del centro para mover. Doble toque / mantener para editar.';
+      initAnnotator();
+    };
+    photo.src=png;
+  
+    stopStream(); if(wakeLock){ try{ await wakeLock.release(); }catch(_){} }
   });
-});
-setTool('dim');
-
-function cx(){ return paint.getContext('2d'); }
-function toCanvasPos(e){
-  const r = paint.getBoundingClientRect();
-  const x = (e.clientX ?? e.touches?.[0]?.clientX ?? e.changedTouches?.[0]?.clientX) - r.left;
-  const y = (e.clientY ?? e.touches?.[0]?.clientY ?? e.changedTouches?.[0]?.clientY) - r.top;
-  const sx = paint.width / r.width, sy = paint.height / r.height;
-  return { x: x*sx, y: y*sy };
-}
-
-/* ---- dibujo ---- */
-function draw(){
-  const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
-  shapes.forEach(s=>{
-    ctx.save();
-    ctx.lineWidth=6; ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
-    ctx.font='32px system-ui, -apple-system, Segoe UI, Roboto';
-
-    if(s.type==='dim'){
-      const {a,b}=s;
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-      drawArrow(ctx,a,b); drawArrow(ctx,b,a);
-      if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label);
-      if(s.id===hoverId || s.id===activeId){ drawHandle(ctx,a); drawHandle(ctx,b); }
-    } else if(s.type==='text'){
-      drawLabel(ctx,s.pos, s.label || 'Texto');
-    }
-    ctx.restore();
+  
+  /* ====== Editor (Flecha + Texto) ====== */
+  let tool='dim', shapes=[], activeId=null, dragMode=null, dragStart=null, hoverId=null;
+  
+  /* --- utilidades tamaño dependiente de pantalla --- */
+  function pxToCanvas(px){
+    const r = paint.getBoundingClientRect();
+    const sx = paint.width / r.width; // cuántos "canvas px" hay en 1 px CSS
+    return px * sx;
+  }
+  function thresholds(){
+    // Umbrales amigables en pantalla chica
+    const pt = pxToCanvas(28);     // radio “agarre” de extremos
+    const seg = pxToCanvas(28);    // distancia a la línea para mover toda la cota
+    const labelW = pxToCanvas(140), labelH = pxToCanvas(44); // caja de texto
+    const handleR = pxToCanvas(11);
+    const lineWidth = Math.max(6, pxToCanvas(3)); // visible en alta densidad
+    return { pt, seg, labelW, labelH, handleR, lineWidth };
+  }
+  
+  function setLegend(){
+    const map={
+      dim:'↔ Arrastra para crear la cota. Toca cerca del centro o la etiqueta para moverla. Puntas para ajustar. Doble toque / mantener para editar.',
+      text:'Toca para colocar un rótulo. Doble toque / mantener para editar.',
+      delete:'Toca un elemento para borrarlo.',
+      clear:'Limpia todas las anotaciones.'
+    };
+    (legendEl||{}).textContent = map[tool]||'';
+  }
+  function setTool(t){
+    tool=t;
+    document.querySelectorAll('.tool').forEach(b=>b.classList.toggle('active', b.dataset.tool===t));
+    setLegend();
+  }
+  document.querySelectorAll('.tool').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const t=b.dataset.tool;
+      if(t==='clear'){ shapes=[]; draw(); return; }
+      setTool(t);
+    });
   });
-  if(hoverId!=null){
-    const s=shapes.find(x=>x.id===hoverId);
-    if(s && s.type==='dim'){
-      const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=3;
-      ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke();
-      ctx.restore();
-    }
-  }
-}
-function drawArrow(ctx, p1, p2){
-  const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), size=14;
-  ctx.beginPath();
-  ctx.moveTo(p1.x,p1.y);
-  ctx.lineTo(p1.x+size*Math.cos(ang+Math.PI/6), p1.y+size*Math.sin(ang+Math.PI/6));
-  ctx.moveTo(p1.x,p1.y);
-  ctx.lineTo(p1.x+size*Math.cos(ang-Math.PI/6), p1.y+size*Math.sin(ang-Math.PI/6));
-  ctx.stroke();
-}
-function drawLabel(ctx, pos, text){
-  const pad=10, t=text||''; const w=ctx.measureText(t).width+pad*2, h=38;
-  const x=pos.x-w/2, y=pos.y-h/2;
-  ctx.fillStyle='#ffd400';
-  ctx.strokeStyle='#333'; ctx.lineWidth=2;
-  roundRect(ctx,x,y,w,h,8); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='#111'; ctx.textBaseline='middle'; ctx.textAlign='center';
-  ctx.fillText(t, x+w/2, y+h/2);
-}
-function drawHandle(ctx, p){
-  ctx.save();
-  ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.arc(p.x,p.y,10,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  ctx.restore();
-}
-function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
-function distToSegment(p,a,b){
-  const l2=(b.x-a.x)**2+(b.y-a.y)**2; if(l2===0) return Math.hypot(p.x-a.x,p.y-a.y);
-  let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));
-  const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)}; return Math.hypot(p.x-proj.x,p.y-proj.y);
-}
-function dist(p,q){ return Math.hypot(p.x-q.x,p.y-q.y); }
-
-/* ---- hit test con extremos ---- */
-function hitTest(p){
-  for(let i=shapes.length-1;i>=0;i--){
-    const s=shapes[i];
-    if(s.type==='dim'){
-      if(dist(p,s.a)<20) return {id:s.id, part:'a'};
-      if(dist(p,s.b)<20) return {id:s.id, part:'b'};
-      if(distToSegment(p,s.a,s.b)<18) return {id:s.id, part:'line'};
-    }else if(s.type==='text'){
-      if(Math.abs(p.x-s.pos.x)<80&&Math.abs(p.y-s.pos.y)<30) return {id:s.id, part:'text'};
-    }
-  }
-  return null;
-}
-
-function promptLabel(defaultText){
-  const v=prompt('Valor/etiqueta (ej: 386 mm):', defaultText||''); return v==null?null:v;
-}
-function addShape(s){ s.id=(Date.now()+Math.random()).toString(36); shapes.push(s); draw(); }
-
-/* ---- interacción ---- */
-function initAnnotator(){
-  shapes=[]; activeId=null; dragMode=null; dragStart=null; hoverId=null; draw();
   setTool('dim');
-
-  let lastTap=0, longPressTimer=null;
-
-  const editUnderPointer=(p)=>{
-    const hit=hitTest(p); if(!hit) return;
-    const s=shapes.find(x=>x.id===hit.id); if(!s) return;
-    if(s.type==='dim' || s.type==='text'){
-      const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
-    }
-  };
-
-  const onDown=(e)=>{
-    if(gesture.active) return;
-    paint.setPointerCapture?.(e.pointerId);
-    const p=toCanvasPos(e);
-    const hit=hitTest(p); hoverId = hit ? hit.id : null;
-
-    // doble toque manual (iOS)
-    const now=Date.now();
-    if(now-lastTap<300 && hit){ editUnderPointer(p); lastTap=0; e.preventDefault(); return; }
-    lastTap=now;
-
-    // long press para editar
-    clearTimeout(longPressTimer);
-    longPressTimer=setTimeout(()=>editUnderPointer(p), 450);
-
-    if(tool==='delete'){ if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); activeId=null; draw(); } return; }
-    if(tool==='text'){ addShape({type:'text', pos:p, label:'Texto'}); draw(); return; }
-
-    if(hit){
-      activeId = hit.id;
-      dragStart = p;
-      dragMode = hit.part; // 'a' | 'b' | 'line'
-    }else{
-      const s={type:'dim', a:p, b:p, label:''};
-      addShape(s);
-      activeId = s.id;
-      dragStart = p;
-      dragMode = 'creating'; // <— SOLO estira B
-    }
-    e.preventDefault();
-  };
-
-  const onMove=(e)=>{
-    if(gesture.active) return;
-    clearTimeout(longPressTimer);
-    const p=toCanvasPos(e);
-
-    if(activeId){
-      const s=shapes.find(x=>x.id===activeId); if(!s) return;
+  
+  function cx(){ return paint.getContext('2d'); }
+  function toCanvasPos(e){
+    const r = paint.getBoundingClientRect();
+    const x = (e.clientX ?? e.touches?.[0]?.clientX ?? e.changedTouches?.[0]?.clientX) - r.left;
+    const y = (e.clientY ?? e.touches?.[0]?.clientY ?? e.changedTouches?.[0]?.clientY) - r.top;
+    const sx = paint.width / r.width, sy = paint.height / r.height;
+    return { x: x*sx, y: y*sy };
+  }
+  
+  /* ---- dibujo ---- */
+  function draw(){
+    const {handleR, lineWidth} = thresholds();
+    const ctx=cx(); ctx.clearRect(0,0,paint.width,paint.height);
+    shapes.forEach(s=>{
+      ctx.save();
+      ctx.lineWidth=lineWidth; ctx.lineCap='round'; ctx.lineJoin='round';
+      ctx.strokeStyle='#ffe600'; ctx.fillStyle='#ffe600';
+      ctx.font=`${pxToCanvas(20)}px system-ui, -apple-system, Segoe UI, Roboto`;
+  
       if(s.type==='dim'){
-        if(dragMode==='creating'){ s.b = p; }
-        else if(dragMode==='a'){ s.a = p; }
-        else if(dragMode==='b'){ s.b = p; }
-        else { const dx=p.x-dragStart.x, dy=p.y-dragStart.y; s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; dragStart=p; }
-        draw();
+        const {a,b}=s;
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        drawArrow(ctx,a,b); drawArrow(ctx,b,a);
+        if(s.label && s.label.trim()) drawLabel(ctx, mid(a,b), s.label);
+        if(s.id===hoverId || s.id===activeId){ drawHandle(ctx,a, handleR); drawHandle(ctx,b, handleR); }
+      } else if(s.type==='text'){
+        drawLabel(ctx,s.pos, s.label || 'Texto');
       }
-      return;
+      ctx.restore();
+    });
+    if(hoverId!=null){
+      const s=shapes.find(x=>x.id===hoverId);
+      if(s && s.type==='dim'){
+        const ctx=cx(); ctx.save(); ctx.strokeStyle='#4cc9f0'; ctx.lineWidth=lineWidth;
+        ctx.beginPath(); ctx.moveTo(s.a.x,s.a.y); ctx.lineTo(s.b.x,s.b.y); ctx.stroke();
+        ctx.restore();
+      }
     }
-    const h=hitTest(p); hoverId = h ? h.id : null; draw();
-    e.preventDefault();
-  };
-
-  const onUp=(e)=>{ clearTimeout(longPressTimer); activeId=null; dragMode=null; dragStart=null; e.preventDefault(); };
-
-  paint.addEventListener('pointerdown', onDown, {passive:false});
-  paint.addEventListener('pointermove', onMove,  {passive:false});
-  paint.addEventListener('pointerup',   onUp,    {passive:false});
-  paint.addEventListener('pointerleave',onUp,    {passive:false});
-
-  // Doble click: escritorio
-  paint.addEventListener('dblclick', (e)=>{ const p=toCanvasPos(e); editUnderPointer(p); });
-}
-
-/* ====== Pinch-to-zoom (dos dedos) ====== */
-const gesture = { active:false, scale:1, tx:0, ty:0, startDist:0, startCx:0, startCy:0, startTx:0, startTy:0, startScale:1 };
-const pointers = new Map();
-function setTransform(){ zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
-zoomLayer.addEventListener('pointerdown', (e)=>{ zoomLayer.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(pointers.size===2){ const [p1,p2]=[...pointers.values()]; gesture.active=true;
-    gesture.startDist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
-    gesture.startCx=(p1.x+p2.x)/2; gesture.startCy=(p1.y+p2.y)/2;
-    gesture.startTx=gesture.tx; gesture.startTy=gesture.ty; gesture.startScale=gesture.scale; }
-});
-zoomLayer.addEventListener('pointermove', (e)=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(gesture.active && pointers.size===2){ const [p1,p2]=[...pointers.values()];
-    const dist=Math.hypot(p2.x-p1.x,p2.y-p1.y), cx=(p1.x+p2.x)/2, cy=(p1.y+p2.y)/2;
-    const ds=dist/gesture.startDist;
-    gesture.scale=Math.min(3,Math.max(1,gesture.startScale*ds));
-    gesture.tx=gesture.startTx+(cx-gesture.startCx); gesture.ty=gesture.startTy+(cy-gesture.startCy);
-    setTransform(); }
-},{passive:false});
-function endPointer(e){ pointers.delete(e.pointerId); if(pointers.size<2){ gesture.active=false; } }
-zoomLayer.addEventListener('pointerup', endPointer);
-zoomLayer.addEventListener('pointercancel', endPointer);
-zoomLayer.addEventListener('pointerleave', endPointer);
-
-/* ====== Repetir / Guardar ====== */
-btnRetake.addEventListener('click', async ()=>{
-  editorArea.style.display='none'; cameraBar.style.display='flex';
-  gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform();
-  await startCamera();
-});
-btnSave.addEventListener('click', ()=>{
-  if(!nombre.value.trim()){ alert('Pon un nombre a la foto.'); return; }
-  const w=photo.naturalWidth, h=photo.naturalHeight;
-  const out=document.createElement('canvas'); out.width=w; out.height=h;
-  const ctx=out.getContext('2d');
-  const img=new Image(); img.onload=()=>{
-    ctx.drawImage(img,0,0,w,h);      // fondo
-    ctx.drawImage(paint,0,0);        // overlay de anotaciones
-    const png=out.toDataURL('image/png');
-    dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
-  }; img.src=photo.src;
-});
-
-/* Limpieza */
-window.addEventListener('pagehide', stopStream);
-window.addEventListener('beforeunload', stopStream);
-
-/* Autoinicio */
-document.addEventListener('DOMContentLoaded', ()=>{ startCamera().catch(()=>{}); });
-</script>
+  }
+  function drawArrow(ctx, p1, p2){
+    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x), size=pxToCanvas(12);
+    ctx.beginPath();
+    ctx.moveTo(p1.x,p1.y);
+    ctx.lineTo(p1.x+size*Math.cos(ang+Math.PI/6), p1.y+size*Math.sin(ang+Math.PI/6));
+    ctx.moveTo(p1.x,p1.y);
+    ctx.lineTo(p1.x+size*Math.cos(ang-Math.PI/6), p1.y+size*Math.sin(ang-Math.PI/6));
+    ctx.stroke();
+  }
+  function drawLabel(ctx, pos, text){
+    const pad=pxToCanvas(8), t=text||'';
+    const w=ctx.measureText(t).width+pad*2, h=pxToCanvas(34);
+    const x=pos.x-w/2, y=pos.y-h/2;
+    ctx.fillStyle='#ffd400';
+    ctx.strokeStyle='#333'; ctx.lineWidth=pxToCanvas(2);
+    roundRect(ctx,x,y,w,h,pxToCanvas(8)); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#111'; ctx.textBaseline='middle'; ctx.textAlign='center';
+    ctx.fillText(t, x+w/2, y+h/2);
+  }
+  function drawHandle(ctx, p, r){
+    ctx.save();
+    ctx.fillStyle='#4cc9f0'; ctx.strokeStyle='#0c1724'; ctx.lineWidth=pxToCanvas(2);
+    ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+  function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+  function dist(p,q){ return Math.hypot(p.x-q.x,p.y-q.y); }
+  function distToSegment(p,a,b){
+    const l2=(b.x-a.x)**2+(b.y-a.y)**2; if(l2===0) return Math.hypot(p.x-a.x,p.y-a.y);
+    let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2; t=Math.max(0,Math.min(1,t));
+    const proj={x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)}; return Math.hypot(p.x-proj.x,p.y-proj.y);
+  }
+  
+  /* ---- hit test con extremos / línea / etiqueta ---- */
+  function hitTest(p){
+    const {pt, seg, labelW, labelH} = thresholds();
+    for(let i=shapes.length-1;i>=0;i--){
+      const s=shapes[i];
+      if(s.type==='dim'){
+        if(dist(p,s.a)<pt) return {id:s.id, part:'a'};
+        if(dist(p,s.b)<pt) return {id:s.id, part:'b'};
+        // mover por línea (tolerancia grande)
+        if(distToSegment(p,s.a,s.b)<seg) return {id:s.id, part:'line'};
+        // mover por etiqueta (área generosa)
+        if(s.label && s.label.trim()){
+          const m = mid(s.a,s.b), hw=labelW/2, hh=labelH/2;
+          if(p.x>=m.x-hw && p.x<=m.x+hw && p.y>=m.y-hh && p.y<=m.y+hh) return {id:s.id, part:'line'};
+        }
+      }else if(s.type==='text'){
+        const hw=labelW/2, hh=labelH/2;
+        if(Math.abs(p.x-s.pos.x)<hw && Math.abs(p.y-s.pos.y)<hh) return {id:s.id, part:'text'};
+      }
+    }
+    return null;
+  }
+  
+  function promptLabel(defaultText){
+    const v=prompt('Valor/etiqueta (ej: 386 mm):', defaultText||''); return v==null?null:v;
+  }
+  function addShape(s){ s.id=(Date.now()+Math.random()).toString(36); shapes.push(s); draw(); }
+  
+  /* ---- interacción ---- */
+  function initAnnotator(){
+    shapes=[]; activeId=null; dragMode=null; dragStart=null; hoverId=null; draw();
+    setTool('dim');
+  
+    let lastTap=0, longPressTimer=null, dragging=false;
+  
+    const editUnderPointer=(p)=>{
+      const hit=hitTest(p); if(!hit) return;
+      const s=shapes.find(x=>x.id===hit.id); if(!s) return;
+      if(s.type==='dim' || s.type==='text'){
+        const val=promptLabel(s.label||''); if(val!==null){ s.label=val; draw(); }
+      }
+    };
+  
+    const onDown=(e)=>{
+      if(gesture.active) return;
+      paint.setPointerCapture?.(e.pointerId);
+      const p=toCanvasPos(e);
+      const hit=hitTest(p); hoverId = hit ? hit.id : null;
+  
+      // doble toque manual (iOS)
+      const now=Date.now();
+      if(now-lastTap<300 && hit){ editUnderPointer(p); lastTap=0; e.preventDefault(); return; }
+      lastTap=now;
+  
+      // long press para editar (si no se arrastra)
+      clearTimeout(longPressTimer);
+      longPressTimer=setTimeout(()=>{ if(!dragging) editUnderPointer(p); }, 500);
+  
+      if(tool==='delete'){ if(hit){ shapes=shapes.filter(s=>s.id!==hit.id); activeId=null; draw(); } return; }
+      if(tool==='text'){ addShape({type:'text', pos:p, label:'Texto'}); draw(); return; }
+  
+      dragging=false;
+  
+      if(hit){
+        activeId = hit.id;
+        dragStart = p;
+        dragMode = hit.part; // 'a' | 'b' | 'line'
+      }else{
+        const s={type:'dim', a:p, b:p, label:''};
+        addShape(s);
+        activeId = s.id;
+        dragStart = p;
+        dragMode = 'creating'; // solo estira B
+      }
+      e.preventDefault();
+    };
+  
+    const onMove=(e)=>{
+      if(gesture.active) return;
+      const p=toCanvasPos(e);
+  
+      // si hay desplazamiento, cancelamos long-press
+      clearTimeout(longPressTimer);
+  
+      if(activeId){
+        const s=shapes.find(x=>x.id===activeId); if(!s) return;
+        dragging=true;
+        if(s.type==='dim'){
+          if(dragMode==='creating'){ s.b = p; }
+          else if(dragMode==='a'){ s.a = p; }
+          else if(dragMode==='b'){ s.b = p; }
+          else { // 'line' -> mover todo por delta
+            const dx=p.x-dragStart.x, dy=p.y-dragStart.y;
+            s.a.x+=dx; s.a.y+=dy; s.b.x+=dx; s.b.y+=dy; dragStart=p;
+          }
+          draw();
+        }else if(s.type==='text'){
+          // permitir mover textos también
+          const dx=p.x-dragStart.x, dy=p.y-dragStart.y; s.pos.x+=dx; s.pos.y+=dy; dragStart=p; draw();
+        }
+        e.preventDefault();
+        return;
+      }
+  
+      const h=hitTest(p); hoverId = h ? h.id : null; draw();
+      e.preventDefault();
+    };
+  
+    const onUp=(e)=>{ clearTimeout(longPressTimer); activeId=null; dragMode=null; dragStart=null; dragging=false; e.preventDefault(); };
+  
+    paint.addEventListener('pointerdown', onDown, {passive:false});
+    paint.addEventListener('pointermove', onMove,  {passive:false});
+    paint.addEventListener('pointerup',   onUp,    {passive:false});
+    paint.addEventListener('pointerleave',onUp,    {passive:false});
+  
+    // Doble click: escritorio
+    paint.addEventListener('dblclick', (e)=>{ const p=toCanvasPos(e); editUnderPointer(p); });
+  }
+  
+  /* ====== Pinch-to-zoom (dos dedos) ====== */
+  const gesture = { active:false, scale:1, tx:0, ty:0, startDist:0, startCx:0, startCy:0, startTx:0, startTy:0, startScale:1 };
+  const pointers = new Map();
+  function setTransform(){ zoomLayer.style.transform = `translate(${gesture.tx}px, ${gesture.ty}px) scale(${gesture.scale})`; }
+  zoomLayer.addEventListener('pointerdown', (e)=>{ zoomLayer.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.size===2){ const [p1,p2]=[...pointers.values()]; gesture.active=true;
+      gesture.startDist=Math.hypot(p2.x-p1.x,p2.y-p1.y);
+      gesture.startCx=(p1.x+p2.x)/2; gesture.startCy=(p1.y+p2.y)/2;
+      gesture.startTx=gesture.tx; gesture.startTy=gesture.ty; gesture.startScale=gesture.scale; }
+  });
+  zoomLayer.addEventListener('pointermove', (e)=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(gesture.active && pointers.size===2){ const [p1,p2]=[...pointers.values()];
+      const dist=Math.hypot(p2.x-p1.x,p2.y-p1.y), cx=(p1.x+p2.x)/2, cy=(p1.y+p2.y)/2;
+      const ds=dist/gesture.startDist;
+      gesture.scale=Math.min(3,Math.max(1,gesture.startScale*ds));
+      gesture.tx=gesture.startTx+(cx-gesture.startCx); gesture.ty=gesture.startTy+(cy-gesture.startCy);
+      setTransform(); }
+  },{passive:false});
+  function endPointer(e){ pointers.delete(e.pointerId); if(pointers.size<2){ gesture.active=false; } }
+  zoomLayer.addEventListener('pointerup', endPointer);
+  zoomLayer.addEventListener('pointercancel', endPointer);
+  zoomLayer.addEventListener('pointerleave', endPointer);
+  
+  /* ====== Repetir / Guardar ====== */
+  btnRetake.addEventListener('click', async ()=>{
+    editorArea.style.display='none'; cameraBar.style.display='flex';
+    gesture.scale=1; gesture.tx=0; gesture.ty=0; setTransform();
+    await startCamera();
+  });
+  btnSave.addEventListener('click', ()=>{
+    if(!nombre.value.trim()){ alert('Pon un nombre a la foto.'); return; }
+    const w=photo.naturalWidth, h=photo.naturalHeight;
+    const out=document.createElement('canvas'); out.width=w; out.height=h;
+    const ctx=out.getContext('2d');
+    const img=new Image(); img.onload=()=>{
+      ctx.drawImage(img,0,0,w,h);      // fondo
+      ctx.drawImage(paint,0,0);        // overlay de anotaciones
+      const png=out.toDataURL('image/png');
+      dataurl.value=png; campoNombre.value=nombre.value.trim(); form.submit();
+    }; img.src=photo.src;
+  });
+  
+  /* Limpieza */
+  window.addEventListener('pagehide', stopStream);
+  window.addEventListener('beforeunload', stopStream);
+  
+  /* Autoinicio */
+  document.addEventListener('DOMContentLoaded', ()=>{ startCamera().catch(()=>{}); });
+  </script>
+  
 {% endblock %}
